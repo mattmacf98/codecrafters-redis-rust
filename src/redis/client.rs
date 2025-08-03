@@ -42,6 +42,10 @@ impl Client {
                                 let size = self.handle_rpush(&mut iter);
                                 return Some(create_int_resp(size));
                             },
+                            "lpush" => {
+                                let size = self.handle_lpush(&mut iter);
+                                return Some(create_int_resp(size));
+                            },
                             "lrange" => {
                                 let vals = self.handle_lrange(&mut iter);
                                 let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
@@ -113,12 +117,27 @@ impl Client {
                 self.lists.insert(list_key.into(), vec![]);
             }
 
-            let mut vals: Vec<String> = vec![];
+            let list = self.lists.get_mut(list_key.into()).unwrap();
             while let Some(RespType::String(val)) = iter.next() {
-                vals.push(val.into());
+                list.push(val.into());
             }
 
-            self.lists.get_mut(list_key.into()).unwrap().extend(vals);
+            return self.lists.get(list_key.into()).unwrap().len();
+        }
+
+        return 0;
+    }
+
+    fn handle_lpush(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
+        if let Some(RespType::String(list_key)) = iter.next() {
+            if !self.lists.contains_key(list_key.into()) {
+                self.lists.insert(list_key.into(), vec![]);
+            }
+
+            let list = self.lists.get_mut(list_key.into()).unwrap();
+            while let Some(RespType::String(val)) = iter.next() {
+                list.insert(0, val.into());
+            }
             return self.lists.get(list_key.into()).unwrap().len();
         }
 
@@ -348,6 +367,40 @@ mod tests {
         assert!(value.eq(":3\r\n"));
         assert!(client.lists.get("list_key".into()).unwrap().len() == 3);
         assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("foo"));
+    }
+
+    #[test]
+    fn test_multi_lpush_command() {
+        let cmds = vec![
+            RespType::String("LPUSH".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("foo".to_string()),
+            RespType::String("bar".to_string()),
+            RespType::String("baz".to_string()),
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":3\r\n"));
+        assert!(client.lists.get("list_key".into()).unwrap().len() == 3);
+        assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("baz"));
+
+        let cmds = vec![
+            RespType::String("LPUSH".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("first".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":4\r\n"));
+        assert!(client.lists.get("list_key".into()).unwrap().len() == 4);
+        assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("first"));
     }
 
     #[test]
