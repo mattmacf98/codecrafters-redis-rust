@@ -50,7 +50,11 @@ impl Client {
                                 let vals = self.handle_lrange(&mut iter);
                                 let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
                                 return Some(create_array_resp(bulk_strs));
-                            }
+                            },
+                            "llen" => {
+                                let size = self.handle_llen(&mut iter);
+                                return Some(create_int_resp(size));
+                            },
                             _ => {}
                         }
                     } 
@@ -109,6 +113,17 @@ impl Client {
         }
 
         None
+    }
+
+    fn handle_llen(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
+        if let Some(RespType::String(list_key)) = iter.next() {
+            if !self.lists.contains_key(list_key.into()) {
+                return 0;
+            }
+            return self.lists.get(list_key.into()).unwrap().len();
+        }
+
+        return 0;
     }
 
     fn handle_rpush(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
@@ -315,6 +330,33 @@ mod tests {
         assert!(res.is_some());
         let value = res.unwrap();
         assert!(value.eq("+hello\r\n"));
+    }
+
+    #[test]
+    fn test_llen_command() {
+        let cmds = vec![
+            RespType::String("LLEN".to_string()),
+            RespType::String("list_key".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":0\r\n"));
+
+        client.lists.insert("list_key".into(), vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()]);
+        let cmds = vec![
+            RespType::String("LLEN".to_string()),
+            RespType::String("list_key".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":6\r\n"));
     }
 
     #[test]
