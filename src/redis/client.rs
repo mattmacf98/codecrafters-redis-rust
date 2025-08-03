@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, slice::Iter};
 
 use crate::{redis::{create_array_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
@@ -23,177 +23,130 @@ impl Client {
     pub fn handle_command(&mut self, cmd: RespType) -> Option<String> {
         match cmd {
             RespType::Array(resp_types) => {
-                for i in 0..resp_types.len() {
-                    if let RespType::String(s) = resp_types.get(i).unwrap() {
+                let mut iter = resp_types.iter();
+
+                while let Some(cmd) = iter.next() {
+                    if let RespType::String(s) = cmd {
                         let command = s.to_lowercase();
 
-                        // PING
-                        if command.eq("ping") {
-                            return Some(create_simple_string_resp(String::from("PONG")));
-                        }
-
-                        // ECHO
-                        if command.eq("echo") && i < resp_types.len() - 1 {
-                            if let RespType::String(message) = resp_types.get(i + 1).unwrap() {
-                                return Some(create_simple_string_resp(message.to_string()));
-                            }
-                        }
-
-                        // SET
-                        if command.eq("set") {
-                            return self.handle_set(i, &resp_types);
-                        }
-
-                        // GET
-                        if command.eq("get") {
-                            return self.handle_get(i, &resp_types);
-                        } 
-
-                        // RPUSH
-                        if command.eq("rpush") {
-                            let size = self.handle_rpush(i, &resp_types);
-                            return Some(create_int_resp(size));
-                        }
-
-                        // LRANGE
-                        if command.eq("lrange") {
-                            let vals = self.handle_lrange(i, &resp_types);
-                            let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
-                            return Some(create_array_resp(bulk_strs));
-                        }
-                    }
-                }
-            },
-            _ => panic!("unhandled type")
-        }
-
-        None
-    }
-
-    fn handle_lrange(&self, i: usize, resp_types: &Vec<RespType>) -> Vec<String> {
-        let key: String;
-        if let RespType::String(list_key) = resp_types.get(i + 1).unwrap() {
-            key = list_key.into();
-            if !self.lists.contains_key(list_key) {
-                return vec![];
-            }
-        } else {
-            panic!("INVALID LRANGE");
-        }
-
-        match (resp_types.get(i + 2).unwrap(), resp_types.get(i + 3).unwrap()) {
-            (RespType::String(start), RespType::String(end)) => {
-                if let (Ok(start_idx), Ok(end_idx)) = (start.parse::<usize>(), end.parse::<usize>()) {
-                    let list = self.lists.get(&key).unwrap();
-                    if start_idx >= list.len() || start_idx > end_idx {
-                        return vec![];
-                    }
-                    
-                    let end_idx = end_idx.min(list.len() - 1);
-                    return list[start_idx..=end_idx].to_vec();
-                }
-                panic!("Invalid LRANGE indices");
-            },
-            (_,_) => panic!("Bad LRANGE ARGS")
-        }
-    }
-
-    fn handle_rpush(&mut self, i: usize, resp_types: &Vec<RespType>) -> usize {
-        let key: String;
-        if let RespType::String(list_key) = resp_types.get(i + 1).unwrap() {
-            key = list_key.into();
-            if !self.lists.contains_key(list_key) {
-                self.lists.insert(list_key.into(), vec![]);
-            }
-        } else {
-            panic!("INVALID RPUSH");
-        }
-
-        let mut cur = i + 2;
-        let mut vals: Vec<String> = vec![];
-        while cur < resp_types.len() {
-            if let RespType::String(val) = resp_types.get(cur).unwrap() {
-                vals.push(val.into());
-                cur += 1;
-            } else {
-                break;
-            }
-        }
-
-        self.lists.get_mut(&key).unwrap().extend(vals);
-        return self.lists.get(&key).unwrap().len();
-    }
-
-    fn handle_set(&mut self, i: usize, resp_types: &Vec<RespType>) -> Option<String> {
-        if i + 4 < resp_types.len() {
-            match (resp_types.get(i + 1).unwrap(), resp_types.get(i + 2).unwrap(), resp_types.get(i + 3).unwrap(), resp_types.get(i + 4).unwrap()) {
-                (RespType::String(key), RespType::String(val), px, exp ) => {
-                    match (px, exp) {
-                        (RespType::String(px), RespType::String(exp)) => {
-                            if px.to_lowercase().eq("px") {
-                                if let Ok(exp_millis) = exp.parse::<u128>() {
-                                    let expiry = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap()
-                                        .as_millis() + exp_millis;
-                                    self.cache.insert(key.clone(), CacheVal { val: val.to_string(), expiry_time: Some(expiry) });
-                                    return Some(create_simple_string_resp("OK".to_string()))
-                                } else {
-                                    panic!("Invalid expiry time")
-                                }
-                            } else {
-                                self.cache.insert(key.clone(), CacheVal { val: val.to_string(), expiry_time: None });
-                                return Some(create_simple_string_resp("OK".to_string()))
-                            }
-                        }
-                        (_,_) => {
-                            self.cache.insert(key.clone(), CacheVal { val: val.to_string(), expiry_time: None });
-                            return Some(create_simple_string_resp("OK".to_string()))
-                        }
-                    }
-                },
-                (_, _, _ ,_) => panic!("INVALID SET COMMANDS")
-            }
-        } else if i + 2 < resp_types.len() {
-            match (resp_types.get(i + 1).unwrap(), resp_types.get(i + 2).unwrap()) {
-                (RespType::String(key), RespType::String(val)) => {
-                    self.cache.insert(key.clone(), CacheVal { val: val.to_string(), expiry_time: None });
-                    return Some(create_simple_string_resp("OK".to_string()))
-                },
-                (_, _) => panic!("INVALID SET COMMANDS")
-            }
-        }
-
-        None
-    }
-
-    fn handle_get(&self, i: usize, resp_types: &Vec<RespType>) -> Option<String> {
-        if i + 1 < resp_types.len() {
-            if let RespType::String(key) = resp_types.get(i + 1).unwrap() {
-                let value = self.cache.get(key);
-                return match value {
-                    Some(v) =>  {
-                        match v.expiry_time {
-                            Some(exp) => {
-                                let now = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_millis();
-                                if now < exp {
-                                    Some(create_simple_string_resp(v.val.to_string()))
-                                } else {
-                                    Some(create_null_bulk_string_resp())
+                        match command.as_str() {
+                            "ping" => return Some(create_simple_string_resp(String::from("PONG"))),
+                            "echo" => {
+                                if let RespType::String(message) = iter.next().expect("Should have echo message") {
+                                    return Some(create_simple_string_resp(message.to_string()));
                                 }
                             },
-                            None => Some(create_simple_string_resp(v.val.to_string()))
+                            "get" => return self.handle_get(&mut iter),
+                            "set" => return self.handle_set(&mut iter),
+                            "rpush" => {
+                                let size = self.handle_rpush(&mut iter);
+                                return Some(create_int_resp(size));
+                            },
+                            "lrange" => {
+                                let vals = self.handle_lrange(&mut iter);
+                                let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
+                                return Some(create_array_resp(bulk_strs));
+                            }
+                            _ => {}
                         }
+                    } 
+                }
+            },
+            _ => panic!("ONLY EXPECTING ARRAY COMMANDS")
+        }
+
+        None
+    }
+
+    fn handle_get(&self, iter: &mut Iter<'_, RespType>) -> Option<String> {
+        if let Some(RespType::String(key)) = iter.next() {
+            let value = self.cache.get(key);
+            return match value {
+                Some(v) =>  {
+                    match v.expiry_time {
+                        Some(exp) => {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis();
+                            if now < exp {
+                                Some(create_simple_string_resp(v.val.to_string()))
+                            } else {
+                                Some(create_null_bulk_string_resp())
+                            }
+                        },
+                        None => Some(create_simple_string_resp(v.val.to_string()))
                     }
-                    None => Some(create_null_bulk_string_resp())
+                }
+                None => Some(create_null_bulk_string_resp())
+            }
+        }
+
+        None
+    }
+
+    fn handle_set(&mut self, iter: &mut Iter<'_, RespType>) -> Option<String> {
+        if let (Some(RespType::String(key)), Some(RespType::String(val))) = (iter.next(), iter.next()) {
+            match (iter.next(), iter.next()) {
+                (Some(RespType::String(px)), Some(RespType::String(exp))) if px.to_lowercase().eq("px") => {
+                    if let Ok(exp_millis) = exp.parse::<u128>() {
+                        let expiry = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + exp_millis;
+                        self.cache.insert(key.clone(), CacheVal { val: val.to_string(), expiry_time: Some(expiry) });
+                        return Some(create_simple_string_resp("OK".to_string()))
+                    } else {
+                        panic!("Invalid expiry time")
+                    }
+                },
+                (_, _) => {
+                    self.cache.insert(key.clone(), CacheVal { val: val.to_string(), expiry_time: None });
+                    return Some(create_simple_string_resp("OK".to_string()));
                 }
             }
         }
 
         None
+    }
+
+    fn handle_rpush(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
+        if let Some(RespType::String(list_key)) = iter.next() {
+            if !self.lists.contains_key(list_key.into()) {
+                self.lists.insert(list_key.into(), vec![]);
+            }
+
+            let mut vals: Vec<String> = vec![];
+            while let Some(RespType::String(val)) = iter.next() {
+                vals.push(val.into());
+            }
+
+            self.lists.get_mut(list_key.into()).unwrap().extend(vals);
+            return self.lists.get(list_key.into()).unwrap().len();
+        }
+
+        return 0;
+    }
+
+    fn handle_lrange(&self, iter: &mut Iter<'_, RespType>) -> Vec<String> {
+        if let Some(RespType::String(list_key)) = iter.next() {
+            if !self.lists.contains_key(list_key.into()) {
+                return vec![];
+            }
+
+            match (iter.next(), iter.next()) {
+                (Some(RespType::String(start)), Some(RespType::String(end))) => {
+                    if let (Ok(start_idx), Ok(end_idx)) = (start.parse::<usize>(), end.parse::<usize>()) {
+                        let list = self.lists.get(list_key.into()).unwrap();
+                        if start_idx >= list.len() || start_idx > end_idx {
+                            return vec![];
+                        }
+                        
+                        let end_idx = end_idx.min(list.len() - 1);
+                        return list[start_idx..=end_idx].to_vec();
+                    }
+                },
+                (_, _) => return vec![]
+            }
+        }
+        return vec![];
     }
 }
 
