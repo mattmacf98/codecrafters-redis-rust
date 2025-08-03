@@ -133,8 +133,25 @@ impl Client {
                 return create_null_bulk_string_resp();
             }
 
-            let val = self.lists.get_mut(list_key.into()).expect("should have list").remove(0);
-            return create_bulk_string_resp(val);
+            let mut count_to_pop = 0;
+            let list = self.lists.get_mut(list_key.into()).expect("should have list");
+            if let Some(RespType::String(count)) = iter.next() {
+                if let Ok(num) = count.parse::<usize>() {
+                    count_to_pop = num.min(list.len());
+                }
+            }
+
+            if count_to_pop == 0 {
+                let val = list.remove(0);
+                return create_bulk_string_resp(val);
+            } else {
+                let mut vals = vec![];
+                for _ in 0..count_to_pop {
+                    vals.push(list.remove(0))
+                }
+                let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
+                return create_array_resp(bulk_strs);
+            }
         }
 
         return create_null_bulk_string_resp();
@@ -390,16 +407,17 @@ mod tests {
         client.lists.insert("list_key".into(), vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()]);
         let cmds = vec![
             RespType::String("LPOP".to_string()),
-            RespType::String("list_key".to_string())
+            RespType::String("list_key".to_string()),
+            RespType::String("2".to_string())
         ];
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
         assert!(res.is_some());
         let value = res.unwrap();
-        assert!(value.eq("$1\r\na\r\n"));
-        assert!(client.lists.get("list_key".into()).unwrap().len() == 5);
-        assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("b"));
+        assert!(value.eq("*2\r\n$1\r\na\r\n$1\r\nb\r\n"));
+        assert!(client.lists.get("list_key".into()).unwrap().len() == 4);
+        assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("c"));
     }
 
     #[test]
