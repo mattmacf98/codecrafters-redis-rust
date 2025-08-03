@@ -63,23 +63,29 @@ impl Client {
     }
 
     fn handle_rpush(&mut self, i: usize, resp_types: &Vec<RespType>) -> usize {
-        if i + 2 < resp_types.len() {
-            match (resp_types.get(i + 1).unwrap(), resp_types.get(i + 2).unwrap()) {
-                (RespType::String(list_key), RespType::String(val)) => {
-                    if !self.lists.contains_key(list_key) {
-                        self.lists.insert(list_key.into(), vec![]);
-                    }
-                    
-                    self.lists.get_mut(list_key.into()).unwrap().push(val.into());
-                    return self.lists.get(list_key.into()).unwrap().len();
-                },
-                (_,_) => {
-                    panic!("INVALID RPUSH");
-                }
+        let key: String;
+        if let RespType::String(list_key) = resp_types.get(i + 1).unwrap() {
+            key = list_key.into();
+            if !self.lists.contains_key(list_key) {
+                self.lists.insert(list_key.into(), vec![]);
+            }
+        } else {
+            panic!("INVALID RPUSH");
+        }
+
+        let mut cur = i + 2;
+        let mut vals: Vec<String> = vec![];
+        while cur < resp_types.len() {
+            if let RespType::String(val) = resp_types.get(cur).unwrap() {
+                vals.push(val.into());
+                cur += 1;
+            } else {
+                break;
             }
         }
 
-        panic!("INVALID RPUSH");
+        self.lists.get_mut(&key).unwrap().extend(vals);
+        return self.lists.get(&key).unwrap().len();
     }
 
     fn handle_set(&mut self, i: usize, resp_types: &Vec<RespType>) -> Option<String> {
@@ -326,5 +332,25 @@ mod tests {
         assert!(value.eq(":2\r\n"));
         assert!(client.lists.get("list_key".into()).unwrap().len() == 2);
         assert!(client.lists.get("list_key".into()).unwrap().get(1).unwrap().eq("bar"));
+    }
+
+    #[test]
+    fn test_multi_rpush_command() {
+        let cmds = vec![
+            RespType::String("RPUSH".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("foo".to_string()),
+            RespType::String("bar".to_string()),
+            RespType::String("baz".to_string()),
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":3\r\n"));
+        assert!(client.lists.get("list_key".into()).unwrap().len() == 3);
+        assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("foo"));
     }
 }
