@@ -113,6 +113,7 @@ impl RespType {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
