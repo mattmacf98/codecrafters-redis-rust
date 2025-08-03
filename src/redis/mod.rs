@@ -13,6 +13,6 @@ pub fn create_null_bulk_string_resp() -> String {
     return "$-1\r\n".to_string();
 }
 
-pub fn create_int_resp(n: i64) -> String {
+pub fn create_int_resp(n: usize) -> String {
     return format!(":{}\r\n", n);
 }

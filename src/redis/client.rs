@@ -50,8 +50,8 @@ impl Client {
                         } 
 
                         if command.eq("rpush") {
-                            self.handle_rpush(i, &resp_types);
-                            return Some(create_int_resp(1));
+                            let size = self.handle_rpush(i, &resp_types);
+                            return Some(create_int_resp(size));
                         }
                     }
                 }
@@ -62,7 +62,7 @@ impl Client {
         None
     }
 
-    fn handle_rpush(&mut self, i: usize, resp_types: &Vec<RespType>) {
+    fn handle_rpush(&mut self, i: usize, resp_types: &Vec<RespType>) -> usize {
         if i + 2 < resp_types.len() {
             match (resp_types.get(i + 1).unwrap(), resp_types.get(i + 2).unwrap()) {
                 (RespType::String(list_key), RespType::String(val)) => {
@@ -70,13 +70,16 @@ impl Client {
                         self.lists.insert(list_key.into(), vec![]);
                     }
                     
-                    self.lists.get_mut(list_key.into()).unwrap().push(val.into())
+                    self.lists.get_mut(list_key.into()).unwrap().push(val.into());
+                    return self.lists.get(list_key.into()).unwrap().len();
                 },
                 (_,_) => {
-                    panic!("INVALID RPUSH")
+                    panic!("INVALID RPUSH");
                 }
             }
         }
+
+        panic!("INVALID RPUSH");
     }
 
     fn handle_set(&mut self, i: usize, resp_types: &Vec<RespType>) -> Option<String> {
@@ -307,5 +310,21 @@ mod tests {
         assert!(res.is_some());
         let value = res.unwrap();
         assert!(value.eq(":1\r\n"));
+        assert!(client.lists.get("list_key".into()).unwrap().len() == 1);
+        assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("foo"));
+
+        let cmds = vec![
+            RespType::String("RPUSH".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("bar".to_string()),
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":2\r\n"));
+        assert!(client.lists.get("list_key".into()).unwrap().len() == 2);
+        assert!(client.lists.get("list_key".into()).unwrap().get(1).unwrap().eq("bar"));
     }
 }
