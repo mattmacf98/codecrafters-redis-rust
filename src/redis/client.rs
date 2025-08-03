@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{redis::{create_bulk_string_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{redis::{create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 
 struct CacheVal {
@@ -9,12 +9,14 @@ struct CacheVal {
 }
 pub struct Client {
     cache: HashMap<String, CacheVal>,
+    lists: HashMap<String, Vec<String>>
 }
 
 impl Client {
     pub fn new() -> Self {
         Client {
             cache: HashMap::new(),
+            lists: HashMap::new(),
         }
     }
 
@@ -42,9 +44,15 @@ impl Client {
                             return self.handle_set(i, &resp_types);
                         }
 
+                        // GET
                         if command.eq("get") {
                             return self.handle_get(i, &resp_types);
                         } 
+
+                        if command.eq("rpush") {
+                            self.handle_rpush(i, &resp_types);
+                            return Some(create_int_resp(1));
+                        }
                     }
                 }
             },
@@ -52,6 +60,23 @@ impl Client {
         }
 
         None
+    }
+
+    fn handle_rpush(&mut self, i: usize, resp_types: &Vec<RespType>) {
+        if i + 2 < resp_types.len() {
+            match (resp_types.get(i + 1).unwrap(), resp_types.get(i + 2).unwrap()) {
+                (RespType::String(list_key), RespType::String(val)) => {
+                    if !self.lists.contains_key(list_key) {
+                        self.lists.insert(list_key.into(), vec![]);
+                    }
+                    
+                    self.lists.get_mut(list_key.into()).unwrap().push(val.into())
+                },
+                (_,_) => {
+                    panic!("INVALID RPUSH")
+                }
+            }
+        }
     }
 
     fn handle_set(&mut self, i: usize, resp_types: &Vec<RespType>) -> Option<String> {
@@ -266,5 +291,21 @@ mod tests {
         assert!(res.is_some());
         let value = res.unwrap();
         assert!(value.eq("+hello\r\n"));
+    }
+
+    #[test]
+    fn test_rpush_command() {
+        let cmds = vec![
+            RespType::String("RPUSH".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("foo".to_string()),
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":1\r\n"));
     }
 }
