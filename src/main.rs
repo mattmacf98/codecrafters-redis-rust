@@ -31,16 +31,13 @@ fn main() {
 
 fn handle_client(mut stream: TcpStream, client: Arc<Mutex<Client>>) {
     loop {
-        println!("proccessing");
         let mut buf = [0; 512];
         let read_count = stream.read(&mut buf).unwrap();
         if read_count == 0 {
             break;
         }
         let buffer = bytes::BytesMut::from(&buf[..read_count]);
-        println!("Buffer: {}", String::from_utf8_lossy(&buffer));
         let resp_res = RespType::parse(&buffer, 0);
-        println!("{:?}", resp_res);
         match resp_res {
             Ok(res) => {
                 let mut guard = client.lock().unwrap();

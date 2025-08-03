@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{redis::{create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{redis::{create_array_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 
 struct CacheVal {
@@ -49,9 +49,17 @@ impl Client {
                             return self.handle_get(i, &resp_types);
                         } 
 
+                        // RPUSH
                         if command.eq("rpush") {
                             let size = self.handle_rpush(i, &resp_types);
                             return Some(create_int_resp(size));
+                        }
+
+                        // LRANGE
+                        if command.eq("lrange") {
+                            let vals = self.handle_lrange(i, &resp_types);
+                            let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
+                            return Some(create_array_resp(bulk_strs));
                         }
                     }
                 }
@@ -60,6 +68,34 @@ impl Client {
         }
 
         None
+    }
+
+    fn handle_lrange(&self, i: usize, resp_types: &Vec<RespType>) -> Vec<String> {
+        let key: String;
+        if let RespType::String(list_key) = resp_types.get(i + 1).unwrap() {
+            key = list_key.into();
+            if !self.lists.contains_key(list_key) {
+                return vec![];
+            }
+        } else {
+            panic!("INVALID LRANGE");
+        }
+
+        match (resp_types.get(i + 2).unwrap(), resp_types.get(i + 3).unwrap()) {
+            (RespType::String(start), RespType::String(end)) => {
+                if let (Ok(start_idx), Ok(end_idx)) = (start.parse::<usize>(), end.parse::<usize>()) {
+                    let list = self.lists.get(&key).unwrap();
+                    if start_idx >= list.len() || start_idx > end_idx {
+                        return vec![];
+                    }
+                    
+                    let end_idx = end_idx.min(list.len() - 1);
+                    return list[start_idx..=end_idx].to_vec();
+                }
+                panic!("Invalid LRANGE indices");
+            },
+            (_,_) => panic!("Bad LRANGE ARGS")
+        }
     }
 
     fn handle_rpush(&mut self, i: usize, resp_types: &Vec<RespType>) -> usize {
@@ -352,5 +388,40 @@ mod tests {
         assert!(value.eq(":3\r\n"));
         assert!(client.lists.get("list_key".into()).unwrap().len() == 3);
         assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("foo"));
+    }
+
+    #[test]
+    fn test_lrange_command() {
+        let cmds = vec![
+            RespType::String("LRANGE".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("2".to_string()),
+            RespType::String("4".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        client.lists.insert("list_key".into(), vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()]);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("*3\r\n$1\r\nc\r\n$1\r\nd\r\n$1\r\ne\r\n"));
+    }
+
+    #[test]
+    fn test_empty_lrange_command() {
+        let cmds = vec![
+            RespType::String("LRANGE".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("2".to_string()),
+            RespType::String("4".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("*0\r\n"));
     }
 }
