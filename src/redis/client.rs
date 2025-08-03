@@ -55,6 +55,7 @@ impl Client {
                                 let size = self.handle_llen(&mut iter);
                                 return Some(create_int_resp(size));
                             },
+                            "lpop" => return Some(self.handle_lpop(&mut iter)),
                             _ => {}
                         }
                     } 
@@ -124,6 +125,19 @@ impl Client {
         }
 
         return 0;
+    }
+
+    fn handle_lpop(&mut self, iter: &mut Iter<'_, RespType>) -> String {
+        if let Some(RespType::String(list_key)) = iter.next() {
+            if !self.lists.contains_key(list_key.into()) || self.lists.get(list_key.into()).expect("should have list").len() == 0 {
+                return create_null_bulk_string_resp();
+            }
+
+            let val = self.lists.get_mut(list_key.into()).expect("should have list").remove(0);
+            return create_bulk_string_resp(val);
+        }
+
+        return create_null_bulk_string_resp();
     }
 
     fn handle_rpush(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
@@ -357,6 +371,35 @@ mod tests {
         assert!(res.is_some());
         let value = res.unwrap();
         assert!(value.eq(":6\r\n"));
+    }
+
+    #[test]
+    fn test_lpop_command() {
+        let cmds = vec![
+            RespType::String("LPOP".to_string()),
+            RespType::String("list_key".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("$-1\r\n"));
+
+        client.lists.insert("list_key".into(), vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()]);
+        let cmds = vec![
+            RespType::String("LPOP".to_string()),
+            RespType::String("list_key".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("$1\r\na\r\n"));
+        assert!(client.lists.get("list_key".into()).unwrap().len() == 5);
+        assert!(client.lists.get("list_key".into()).unwrap().get(0).unwrap().eq("b"));
     }
 
     #[test]
