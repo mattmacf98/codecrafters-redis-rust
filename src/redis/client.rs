@@ -133,14 +133,21 @@ impl Client {
 
             match (iter.next(), iter.next()) {
                 (Some(RespType::String(start)), Some(RespType::String(end))) => {
-                    if let (Ok(start_idx), Ok(end_idx)) = (start.parse::<usize>(), end.parse::<usize>()) {
+                    if let (Ok(mut start_idx), Ok(mut end_idx)) = (start.parse::<i64>(), end.parse::<i64>()) {
                         let list = self.lists.get(list_key.into()).unwrap();
-                        if start_idx >= list.len() || start_idx > end_idx {
+                        if start_idx < 0 {
+                            start_idx += list.len() as i64;
+                        }
+                        if end_idx < 0 {
+                            end_idx += list.len() as i64;
+                        }
+                        if start_idx >= list.len() as i64 || start_idx > end_idx {
                             return vec![];
                         }
                         
-                        let end_idx = end_idx.min(list.len() - 1);
-                        return list[start_idx..=end_idx].to_vec();
+                        end_idx = end_idx.min(list.len() as i64 - 1);
+                        start_idx = start_idx.max(0);
+                        return list[(start_idx as usize)..=(end_idx as usize)].to_vec();
                     }
                 },
                 (_, _) => return vec![]
@@ -376,5 +383,23 @@ mod tests {
         assert!(res.is_some());
         let value = res.unwrap();
         assert!(value.eq("*0\r\n"));
+    }
+
+    #[test]
+    fn test_negative_lrange_command() {
+        let cmds = vec![
+            RespType::String("LRANGE".to_string()),
+            RespType::String("list_key".to_string()),
+            RespType::String("2".to_string()),
+            RespType::String("-2".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new();
+        client.lists.insert("list_key".into(), vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()]);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("*3\r\n$1\r\nc\r\n$1\r\nd\r\n$1\r\ne\r\n"));
     }
 }
