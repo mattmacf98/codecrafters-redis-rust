@@ -1,6 +1,6 @@
 use std::{collections::HashMap, slice::Iter, sync::{Arc, Mutex}};
 
-use crate::{redis::{client, create_array_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{redis::{client, create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -103,6 +103,22 @@ impl Client {
             match cache_guard.get_mut(key.into()) {
                 Some(CacheVal::Stream(cache_stream)) => {
                     if let Some(RespType::String(entry_id)) = iter.next() {
+                        let parts: Vec<&str> = entry_id.split('-').collect();
+                        if parts.len() != 2 {
+                            return create_basic_err_resp("ERR Invalid stream ID format".to_string());
+                        }
+
+                        if entry_id == "0-0" {
+                            return create_basic_err_resp("ERR The ID specified in XADD must be greater than 0-0".to_string());
+                        }
+
+                        if !cache_stream.stream.is_empty() {
+                            let last_id = &cache_stream.stream.last().unwrap().id;
+                            if entry_id <= last_id {
+                                return create_basic_err_resp("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string());
+                            }
+                        }
+
                         let mut kvs: Vec<KeyVal> = vec![];
                         loop {
                             match (iter.next(), iter.next()) {
@@ -426,6 +442,57 @@ mod tests {
             },
             _ => panic!("Incorrect cache type")
         }
+    }
+
+    #[test]
+    fn test_xadd_command_validation() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+        
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("0-0".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("-ERR The ID specified in XADD must be greater than 0-0\r\n"));
+        
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            let stream_item = StreamItem {id: "1-1".into(), key_vals: vec![]};
+            cache_guard.insert("stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item] }));
+        }
+
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("1-1".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"));
+
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("0-1".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"));
     }
 
     #[test]

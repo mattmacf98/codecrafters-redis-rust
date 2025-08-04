@@ -4,6 +4,10 @@ pub fn create_simple_string_resp(str: String) -> String {
     return format!("+{}\r\n", str);
 }
 
+pub fn create_basic_err_resp(str: String) -> String {
+    return format!("-{}\r\n", str);
+}
+
 pub fn create_bulk_string_resp(str: String) -> String {
     let len = str.len();
     return format!("${}\r\n{}\r\n", len, str);
