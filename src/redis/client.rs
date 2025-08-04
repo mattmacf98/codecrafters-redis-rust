@@ -103,6 +103,14 @@ impl Client {
             match cache_guard.get_mut(key.into()) {
                 Some(CacheVal::Stream(cache_stream)) => {
                     if let Some(RespType::String(entry_id)) = iter.next() {
+                        let mut entry_id = String::from(entry_id);
+                        if entry_id.eq("*") {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis();
+                            entry_id = format!("{}-*", now);
+                        }
                         let parts: Vec<&str> = entry_id.split('-').collect();
                         if parts.len() != 2 {
                             return create_basic_err_resp("ERR Invalid stream ID format".to_string());
@@ -515,6 +523,27 @@ mod tests {
         assert!(res.is_some());
         let value = res.unwrap();
         assert!(value.eq("$3\r\n2-2\r\n"));
+    }
+
+    #[test]
+    fn test_xadd_command_full() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+        
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("*".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        let parts: Vec<&str>  = value.split("\r\n").collect();
+        let id_parts: Vec<&str> = parts[1].split("-").collect();
+        assert!(id_parts[1].eq("0"));
     }
 
     #[test]
