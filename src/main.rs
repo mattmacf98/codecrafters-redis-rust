@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread};
 
-use crate::{redis::{client::{self, CacheVal, Client}, create_simple_string_resp}, resp::types::RespType};
+use crate::{redis::{client::{self, CacheVal, Client, StringCacheVal}, create_simple_string_resp}, resp::types::RespType};
 
 pub mod resp;
 pub mod redis;
@@ -11,18 +11,13 @@ fn main() {
     println!("Logs from your program will appear here!");
     
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let lists: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-    let blocked_list_queue: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                let lists_clone = lists.clone();
-                let cache_clone = cache.clone();
-                let blocked_list_queue_clone = blocked_list_queue.clone();
-                let client = Client::new(cache_clone, lists_clone, blocked_list_queue_clone);
+                let client = Client::new(cache.clone());
                 thread::spawn(move || {
                     handle_client(stream, client);
                 });
