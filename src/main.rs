@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
-use std::{io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread};
+use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread};
 
-use crate::{redis::{client::{self, Client}, create_simple_string_resp}, resp::types::RespType};
+use crate::{redis::{client::{self, CacheVal, Client}, create_simple_string_resp}, resp::types::RespType};
 
 pub mod resp;
 pub mod redis;
@@ -11,15 +11,20 @@ fn main() {
     println!("Logs from your program will appear here!");
     
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let client = Arc::new(Mutex::new(Client::new()));
+    let lists: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+    let blocked_list_queue: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                let client_clone = client.clone();
+                let lists_clone = lists.clone();
+                let cache_clone = cache.clone();
+                let blocked_list_queue_clone = blocked_list_queue.clone();
+                let client = Client::new(cache_clone, lists_clone, blocked_list_queue_clone);
                 thread::spawn(move || {
-                    handle_client(stream, client_clone);
+                    handle_client(stream, client);
                 });
             }
             Err(e) => {
@@ -29,7 +34,7 @@ fn main() {
     }
 }
 
-fn handle_client(mut stream: TcpStream, client: Arc<Mutex<Client>>) {
+fn handle_client(mut stream: TcpStream, mut client: Client) {
     loop {
         let mut buf = [0; 512];
         let read_count = stream.read(&mut buf).unwrap();
@@ -37,11 +42,11 @@ fn handle_client(mut stream: TcpStream, client: Arc<Mutex<Client>>) {
             break;
         }
         let buffer = bytes::BytesMut::from(&buf[..read_count]);
+        println!("received: {}", String::from_utf8_lossy(&buffer));
         let resp_res = RespType::parse(&buffer, 0);
         match resp_res {
             Ok(res) => {
-                let mut guard = client.lock().unwrap();
-                let res = guard.handle_command(res.0);
+                let res = client.handle_command(res.0);
                 if let Some(message) = res {
                     stream.write_all(message.as_bytes()).unwrap();
                 }
