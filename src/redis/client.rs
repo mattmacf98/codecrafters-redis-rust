@@ -111,10 +111,29 @@ impl Client {
                         if entry_id == "0-0" {
                             return create_basic_err_resp("ERR The ID specified in XADD must be greater than 0-0".to_string());
                         }
+                        
+                        let stream_id = parts[1];
+                        let final_id_sequence = match (stream_id, cache_stream.stream.is_empty()) {
+                            ("*", true) => if parts[0] == "0" { 1 } else { 0 },
+                            ("*", false) => {
+                                let last_id = &cache_stream.stream.last().unwrap().id;
+                                let last_id_parts: Vec<&str> = last_id.split('-').collect();
+                                if last_id_parts[0] == parts[0] {
+                                    let last_id_sequence = last_id_parts[1].parse::<i64>().unwrap_or(0);
+                                    last_id_sequence + 1    
+                                } else {
+                                    if parts[0] == "0" { 1 } else { 0 }
+                                }
+                                
+                            },
+                            (val, _) => val.parse::<i64>().unwrap_or(0)
+                        };
+
+                        let entry_id = format!("{}-{}", parts[0], final_id_sequence);
 
                         if !cache_stream.stream.is_empty() {
                             let last_id = &cache_stream.stream.last().unwrap().id;
-                            if entry_id <= last_id {
+                            if entry_id <= last_id.clone() {
                                 return create_basic_err_resp("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string());
                             }
                         }
@@ -129,7 +148,7 @@ impl Client {
                             }
                         }
                         
-                        cache_stream.stream.push(StreamItem { id: entry_id.into(), key_vals: kvs });
+                        cache_stream.stream.push(StreamItem { id: entry_id.clone().into(), key_vals: kvs });
                         return create_bulk_string_resp(entry_id.to_string());
                     }
                 }
@@ -431,6 +450,7 @@ mod tests {
         let res = client.handle_command(cmd);
         assert!(res.is_some());
         let value = res.unwrap();
+        println!("{}", value);
         assert!(value.eq("$15\r\n1526919030474-0\r\n"));
         let cach_gaurd = cache.lock().unwrap();
         assert!(cach_gaurd.contains_key("stream_key"));
@@ -442,6 +462,59 @@ mod tests {
             },
             _ => panic!("Incorrect cache type")
         }
+    }
+
+    #[test]
+    fn test_xadd_command_partial() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+        
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("0-*".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("$3\r\n0-1\r\n"));
+
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("1-*".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        println!("{}", value);
+        assert!(value.eq("$3\r\n1-0\r\n"));
+        
+        
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            let stream_item = StreamItem {id: "2-1".into(), key_vals: vec![]};
+            cache_guard.insert("stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item] }));
+        }
+
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("2-*".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("$3\r\n2-2\r\n"));
     }
 
     #[test]
