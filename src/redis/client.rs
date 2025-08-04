@@ -65,6 +65,7 @@ impl Client {
                             },
                             "lpop" => return Some(self.handle_lpop(&mut iter)),
                             "blpop" => return Some(self.handle_blpop(&mut iter)),
+                            "type" => return Some(self.handle_type(&mut iter)),
                             _ => {}
                         }
                     } 
@@ -74,6 +75,20 @@ impl Client {
         }
 
         None
+    }
+
+    fn handle_type(&self, iter: &mut Iter<'_, RespType>) -> String {
+        let cache_guard = self.cache.lock().unwrap();
+        if let Some(RespType::String(key)) = iter.next() {
+            let value = cache_guard.get(key);
+            match value {
+                Some(CacheVal::String(_)) =>  return create_simple_string_resp("string".to_string()),
+                Some(CacheVal::List(_)) =>  return create_simple_string_resp("list".to_string()),
+                None => return create_simple_string_resp("none".to_string())
+            }
+        }
+
+        return create_simple_string_resp("none".to_string());
     }
 
     fn handle_get(&self, iter: &mut Iter<'_, RespType>) -> Option<String> {
@@ -334,8 +349,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_type_command() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: None }));
+            cache_guard.insert("bar".to_string(), CacheVal::List(ListCacheVal {list: vec![], block_queue: vec![]}));
+        }
+
+        let cmds = vec![
+            RespType::String("TYPE".to_string()),
+            RespType::String("foo".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("+string\r\n"));
+
+        let cmds = vec![
+            RespType::String("TYPE".to_string()),
+            RespType::String("bar".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("+list\r\n"));
+
+        let cmds = vec![
+            RespType::String("TYPE".to_string()),
+            RespType::String("other".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("+none\r\n"));
+    }
+
+    #[test]
     fn test_set_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        
         let cmds = vec![
             RespType::String("SET".to_string()),
             RespType::String("foo".to_string()),
