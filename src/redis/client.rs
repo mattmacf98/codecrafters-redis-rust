@@ -168,6 +168,19 @@ impl Client {
 
     fn handle_blpop(&mut self, iter: &mut Iter<'_, RespType>) -> String {
         if let Some(RespType::String(list_key)) = iter.next() {
+            let mut expiration: Option<u128> = None;
+            if let Some(RespType::String(seconds)) = iter.next() {
+                if let Ok(num) = seconds.parse::<f32>() {
+                    if num != 0.0 {
+                        let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis();
+                        expiration = Some(now + ((num * 1000.0) as u128));
+                    }
+                }
+            }
+
             loop {
                 let mut blocked_list_queue_gaurd = self.blocked_list_queue.lock().unwrap();
                 if !blocked_list_queue_gaurd.contains_key(list_key.into()) {
@@ -185,19 +198,32 @@ impl Client {
                     // you are at the front, do your logic
                     let mut lists_guard = self.lists.lock().unwrap();
                     if !lists_guard.contains_key(list_key.into()) || lists_guard.get_mut(list_key.into()).expect("should have list").len() == 0 {
+                        // no items
                         if queue.iter().find(|&id| self.id.eq(id)).is_none() {
                             // add yourself to the queue 
                             queue.push(self.id.clone());
                         }
-                        continue;
+                    } else {
+                        let val = lists_guard.get_mut(list_key.into()).expect("should have list").remove(0);
+                        if queue.len() > 0 {
+                            queue.remove(0);
+                        }
+                        let bulk_strs = vec![create_bulk_string_resp(list_key.into()),create_bulk_string_resp(val)];
+                        return create_array_resp(bulk_strs);
                     }
+                }
 
-                    let val = lists_guard.get_mut(list_key.into()).expect("should have list").remove(0);
-                    if queue.len() > 0 {
-                        queue.remove(0);
+                // break if you have waited too long
+                let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis();
+                if expiration.is_some() && now > expiration.unwrap() {
+                    let index = queue.iter().position(|id| self.id.eq(id));
+                    if index.is_some() {
+                        queue.remove(index.unwrap());
                     }
-                    let bulk_strs = vec![create_bulk_string_resp(list_key.into()),create_bulk_string_resp(val)];
-                    return create_array_resp(bulk_strs);
+                    break;
                 }
             }
         }
