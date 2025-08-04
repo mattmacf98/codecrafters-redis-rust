@@ -4,7 +4,8 @@ use crate::{redis::{client, create_array_resp, create_bulk_string_resp, create_i
 
 pub enum CacheVal {
     String(StringCacheVal),
-    List(ListCacheVal)
+    List(ListCacheVal),
+    Stream(StreamCacheVal)
 }
 pub struct StringCacheVal {
     val: String,
@@ -14,6 +15,20 @@ pub struct StringCacheVal {
 pub struct ListCacheVal {
     list: Vec<String>,
     block_queue: Vec<String>
+}
+
+pub struct StreamCacheVal {
+    stream: Vec<StreamItem>
+}
+
+pub struct KeyVal {
+    key: String,
+    val: String
+}
+
+pub struct StreamItem {
+    id: String,
+    key_vals: Vec<KeyVal>
 }
 pub struct Client {
     id: String,
@@ -66,6 +81,7 @@ impl Client {
                             "lpop" => return Some(self.handle_lpop(&mut iter)),
                             "blpop" => return Some(self.handle_blpop(&mut iter)),
                             "type" => return Some(self.handle_type(&mut iter)),
+                            "xadd" => return Some(self.handle_xadd(&mut iter)),
                             _ => {}
                         }
                     } 
@@ -77,13 +93,45 @@ impl Client {
         None
     }
 
+    fn handle_xadd(&self, iter: &mut Iter<'_, RespType>) -> String {
+        let mut cache_guard = self.cache.lock().unwrap();
+        if let Some(RespType::String(key)) = iter.next() {
+            if !cache_guard.contains_key(key.into()) {
+                cache_guard.insert(key.into(), CacheVal::Stream(StreamCacheVal { stream: vec![] }));
+            }
+
+            match cache_guard.get_mut(key.into()) {
+                Some(CacheVal::Stream(cache_stream)) => {
+                    if let Some(RespType::String(entry_id)) = iter.next() {
+                        let mut kvs: Vec<KeyVal> = vec![];
+                        loop {
+                            match (iter.next(), iter.next()) {
+                                (Some(RespType::String(entry_key)), Some(RespType::String(entry_val))) => {
+                                    kvs.push(KeyVal { key: entry_key.to_string(), val: entry_val.to_string() });
+                                },
+                                _ => break
+                            }
+                        }
+                        
+                        cache_stream.stream.push(StreamItem { id: entry_id.into(), key_vals: kvs });
+                        return create_bulk_string_resp(entry_id.to_string());
+                    }
+                }
+                _ => return create_null_bulk_string_resp()
+            }
+        }
+
+        return create_null_bulk_string_resp();
+    }
+
     fn handle_type(&self, iter: &mut Iter<'_, RespType>) -> String {
         let cache_guard = self.cache.lock().unwrap();
         if let Some(RespType::String(key)) = iter.next() {
             let value = cache_guard.get(key);
             match value {
-                Some(CacheVal::String(_)) =>  return create_simple_string_resp("string".to_string()),
-                Some(CacheVal::List(_)) =>  return create_simple_string_resp("list".to_string()),
+                Some(CacheVal::String(_)) => return create_simple_string_resp("string".to_string()),
+                Some(CacheVal::List(_)) => return create_simple_string_resp("list".to_string()),
+                Some(CacheVal::Stream(_)) => return create_simple_string_resp("stream".to_string()),
                 None => return create_simple_string_resp("none".to_string())
             }
         }
@@ -349,6 +397,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_xadd_command() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        
+        let cmds = vec![
+            RespType::String("XADD".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("1526919030474-0".to_string()),
+            RespType::String("temperature".to_string()),
+            RespType::String("36".to_string()),
+            RespType::String("humidity".to_string()),
+            RespType::String("92".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let mut client = Client::new(cache.clone());
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("$15\r\n1526919030474-0\r\n"));
+        let cach_gaurd = cache.lock().unwrap();
+        assert!(cach_gaurd.contains_key("stream_key"));
+        let cache_val = cach_gaurd.get("stream_key").unwrap();
+        match cache_val {
+            CacheVal::Stream(val) => {
+                assert!(val.stream.len() == 1);
+                assert!(val.stream.get(0).unwrap().id.eq("1526919030474-0"));
+            },
+            _ => panic!("Incorrect cache type")
+        }
+    }
+
+    #[test]
     fn test_type_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         let mut client = Client::new(cache.clone());
@@ -357,6 +437,7 @@ mod tests {
             let mut cache_guard = cache.lock().unwrap();
             cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: None }));
             cache_guard.insert("bar".to_string(), CacheVal::List(ListCacheVal {list: vec![], block_queue: vec![]}));
+            cache_guard.insert("faz".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![] }));
         }
 
         let cmds = vec![
@@ -378,6 +459,16 @@ mod tests {
         assert!(res.is_some());
         let value = res.unwrap();
         assert!(value.eq("+list\r\n"));
+
+        let cmds = vec![
+            RespType::String("TYPE".to_string()),
+            RespType::String("faz".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("+stream\r\n"));
 
         let cmds = vec![
             RespType::String("TYPE".to_string()),
