@@ -60,6 +60,12 @@ impl Client {
                     if let RespType::String(s) = cmd {
                         let command = s.to_lowercase();
 
+                        if self.staging_commands && command.ne("exec") {
+                            // only stage commands here
+                            self.staged_commands.push(cmd.clone());
+                            return Some(create_simple_string_resp("QUEUED".into()));
+                        }
+
                         match command.as_str() {
                             "multi" => {
                                 self.staging_commands = true;

@@ -3,7 +3,7 @@ use bytes::BytesMut;
 
 use crate::resp::RespError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RespType {
     String(String),
     Error(String),
