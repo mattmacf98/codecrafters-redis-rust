@@ -1,6 +1,6 @@
 use std::{collections::HashMap, slice::Iter, str::FromStr, sync::{Arc, Mutex}};
 
-use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -194,6 +194,23 @@ impl Client {
                                 let redis_command = XrangeCommand::new(stream_key.to_string(), start_id.to_string(), end_id.to_string(), self.cache.clone());
                                 return Some(redis_command.execute(&mut iter));
                             },
+                            "xread" => {
+                                let _ = match iter.next().expect("Should have streams keyword") {
+                                    RespType::String(stream_keyword) if stream_keyword.eq("streams") => true,
+                                    _ => panic!("XREAD command expects a end_id")
+                                };
+                                let stream_key = match iter.next().expect("Should have stream key") {
+                                    RespType::String(stream_key) => stream_key,
+                                    _ => panic!("XREAD command expects a stream_key")
+                                };
+                                let start_id = match iter.next().expect("Should have stream start_id") {
+                                    RespType::String(stream_key) => stream_key,
+                                    _ => panic!("XREAD command expects a start_id")
+                                };
+                                
+                                let redis_command = XreadCommand::new(stream_key.to_string(), start_id.to_string(), self.cache.clone());
+                                return Some(create_array_resp(vec![redis_command.execute(&mut iter)]));
+                            }
                             _ => {}
                         }
                     } 
@@ -221,6 +238,34 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_xread_command() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            let stream_item_one = StreamItem {id: "0-1".into(), key_vals: vec![KeyVal {key: "foo".to_string(), val: "bar".to_string()} ]};
+            let stream_item_two = StreamItem {id: "0-2".into(), key_vals: vec![KeyVal {key: "bar".to_string(), val: "baz".to_string()} ]};
+            let stream_item_three = StreamItem {id: "0-3".into(), key_vals: vec![KeyVal {key: "baz".to_string(), val: "foo".to_string()} ]};
+            cache_guard.insert("stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item_one, stream_item_two, stream_item_three] }));
+        }
+        
+        let cmds = vec![
+            RespType::String("XREAD".to_string()),
+            RespType::String("streams".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("0-2".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        println!("{}", value);
+        assert!(value.eq("*1\r\n*2\r\n$10\r\nstream_key\r\n*1\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+    }
 
     #[test]
     fn test_xrange_command() {
