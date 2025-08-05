@@ -51,6 +51,17 @@ fn main() {
 
         let replconf_message_two = create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("capa".into()), create_bulk_string_resp("psync2".into())]);
         master_stream.write_all(replconf_message_two.as_bytes()).unwrap();
+
+        let mut response_buf = [0; 512];
+        master_stream.read(&mut response_buf).unwrap();
+        println!("Received from master: {}", String::from_utf8_lossy(&response_buf));
+
+        let psync_message = create_array_resp(vec![create_bulk_string_resp("PSYNC".into()), create_bulk_string_resp("?".into()), create_bulk_string_resp("-1".into())]);
+        master_stream.write_all(psync_message.as_bytes()).unwrap();
+
+        let mut response_buf = [0; 512];
+        master_stream.read(&mut response_buf).unwrap();
+        println!("Received from master: {}", String::from_utf8_lossy(&response_buf));
     }
     
     for stream in listener.incoming() {
