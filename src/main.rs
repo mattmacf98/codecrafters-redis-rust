@@ -5,6 +5,7 @@ use crate::{redis::{client::{self, CacheVal, Client, StringCacheVal}, create_sim
 
 pub mod resp;
 pub mod redis;
+pub mod commands;
 
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.

@@ -1,6 +1,6 @@
-use std::{collections::HashMap, slice::Iter, sync::{Arc, Mutex}};
+use std::{collections::HashMap, slice::Iter, str::FromStr, sync::{Arc, Mutex}};
 
-use crate::{redis::{client, create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -8,27 +8,27 @@ pub enum CacheVal {
     Stream(StreamCacheVal)
 }
 pub struct StringCacheVal {
-    val: String,
-    expiry_time: Option<u128>
+    pub(crate) val: String,
+    pub(crate) expiry_time: Option<u128>
 }
 
 pub struct ListCacheVal {
-    list: Vec<String>,
-    block_queue: Vec<String>
+    pub(crate) list: Vec<String>,
+    pub(crate) block_queue: Vec<String>
 }
 
 pub struct StreamCacheVal {
-    stream: Vec<StreamItem>
+    pub(crate) stream: Vec<StreamItem>
 }
 
 pub struct KeyVal {
-    key: String,
-    val: String
+    pub(crate) key: String,
+    pub(crate) val: String
 }
 
 pub struct StreamItem {
-    id: String,
-    key_vals: Vec<KeyVal>
+    pub(crate) id: String,
+    pub(crate) key_vals: Vec<KeyVal>
 }
 pub struct Client {
     id: String,
@@ -53,35 +53,129 @@ impl Client {
                         let command = s.to_lowercase();
 
                         match command.as_str() {
-                            "ping" => return Some(create_simple_string_resp(String::from("PONG"))),
-                            "echo" => {
-                                if let RespType::String(message) = iter.next().expect("Should have echo message") {
-                                    return Some(create_simple_string_resp(message.to_string()));
-                                }
+                            "ping" => {
+                                let redis_command = PingCommand::new();
+                                return Some(redis_command.execute(&mut iter));
                             },
-                            "get" => return self.handle_get(&mut iter),
-                            "set" => return self.handle_set(&mut iter),
+                            "echo" => {
+                                let message = match iter.next().expect("Should have echo message") {
+                                    RespType::String(message) => message,
+                                    _ => panic!("Echo command expects a string message")
+                                };
+                                let redis_command = EchoCommand::new(message.to_string());
+                                return Some(redis_command.execute(&mut iter));
+                            },
+                            "get" => {
+                                let key = match iter.next().expect("Should have key") {
+                                    RespType::String(key) => key,
+                                    _ => panic!("Get command expects a string key")
+                                };
+                                let redis_command = GetCommand::new(key.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            },
+                            "set" => {
+                                let (key, value) = match (iter.next().expect("Should have key"), iter.next().expect("Should have value")) {
+                                    (RespType::String(key), RespType::String(value)) => (key,value),
+                                    _ => panic!("Set command expects a string key and value")
+                                };
+                                let expire: Option<u128> = match (iter.next(), iter.next()) {
+                                    (Some(RespType::String(px)), Some(RespType::String(exp))) if px.to_lowercase().eq("px") => {
+                                        if let Ok(exp_millis) = exp.parse::<u128>() {
+                                            Some(exp_millis)
+                                        } else {
+                                            panic!("Invalid expiry time")
+                                        }
+                                    },
+                                    _ => None
+                                };
+                                let redis_command = SetCommand::new(key.to_string(), value.to_string(), expire, self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            },
                             "rpush" => {
-                                let size = self.handle_rpush(&mut iter);
-                                return Some(create_int_resp(size));
+                                let list_key = match iter.next().expect("Should have list key") {
+                                    RespType::String(list_key) => list_key,
+                                    _ => panic!("RPUSH command expects a list key")
+                                };
+                                let redis_command = RpushCommand::new(list_key.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
                             },
                             "lpush" => {
-                                let size = self.handle_lpush(&mut iter);
-                                return Some(create_int_resp(size));
+                                let list_key = match iter.next().expect("Should have list key") {
+                                    RespType::String(list_key) => list_key,
+                                    _ => panic!("LPUSH command expects a list key")
+                                };
+                                let redis_command = LpushCommand::new(list_key.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
                             },
                             "lrange" => {
-                                let vals = self.handle_lrange(&mut iter);
-                                let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
-                                return Some(create_array_resp(bulk_strs));
+                                let list_key = match iter.next().expect("Should have list key") {
+                                    RespType::String(list_key) => list_key,
+                                    _ => panic!("LRANGE command expects a list key")
+                                };
+                                let start = match Self::extract_num(&mut iter) {
+                                    Some(val) => val,
+                                    None => panic!("LRANGE could not parse start int"),
+                                };
+                                let end = match Self::extract_num(&mut iter) {
+                                    Some(val) => val,
+                                    None => panic!("LRANGE could not parse end int"),
+                                };
+
+                                let redis_command = LrangeCommand::new(list_key.to_string(), start, end, self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
                             },
                             "llen" => {
-                                let size = self.handle_llen(&mut iter);
-                                return Some(create_int_resp(size));
+                                let list_key = match iter.next().expect("Should have list key") {
+                                    RespType::String(list_key) => list_key,
+                                    _ => panic!("LLEN command expects a list key")
+                                };
+                                let redis_command = LlenCommand::new(list_key.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
                             },
-                            "lpop" => return Some(self.handle_lpop(&mut iter)),
-                            "blpop" => return Some(self.handle_blpop(&mut iter)),
-                            "type" => return Some(self.handle_type(&mut iter)),
-                            "xadd" => return Some(self.handle_xadd(&mut iter)),
+                            "lpop" => {
+                                let list_key = match iter.next().expect("Should have list key") {
+                                    RespType::String(list_key) => list_key,
+                                    _ => panic!("LPOP command expects a list key")
+                                };
+                                let count = match Self::extract_num(&mut iter) {
+                                    Some(val) => Some(val),
+                                    None => None
+                                };
+                                let redis_command = LpopCommand::new(list_key.to_string(), count, self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            }
+                            "blpop" => {
+                                let list_key = match iter.next().expect("Should have list key") {
+                                    RespType::String(list_key) => list_key,
+                                    _ => panic!("BLPOP command expects a list key")
+                                };
+                                let timeout = match Self::extract_num(&mut iter) {
+                                    Some(val) => val,
+                                    None => panic!("BLPOP could not parse timeout float"),
+                                };
+                                let redis_command = BlpopCommand::new(list_key.to_string(), self.id.clone(), timeout, self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            },
+                            "type" => {
+                                let key = match iter.next().expect("Should have key") {
+                                    RespType::String(key) => key,
+                                    _ => panic!("TYPE command expects a key")
+                                };
+                                let redis_command = TypeCommand::new(key.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            },
+                            "xadd" => {
+                                let stream_key = match iter.next().expect("Should have stream key") {
+                                    RespType::String(stream_key) => stream_key,
+                                    _ => panic!("XADD command expects a stream_key")
+                                };
+                                let entry_id = match iter.next().expect("Should have stream entry_id") {
+                                    RespType::String(stream_key) => stream_key,
+                                    _ => panic!("XADD command expects a entry_id")
+                                };
+                                let redis_command = XaddCommand::new(stream_key.to_string(), entry_id.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            },
                             _ => {}
                         }
                     } 
@@ -93,345 +187,16 @@ impl Client {
         None
     }
 
-    fn handle_xadd(&self, iter: &mut Iter<'_, RespType>) -> String {
-        let mut cache_guard = self.cache.lock().unwrap();
-        if let Some(RespType::String(key)) = iter.next() {
-            if !cache_guard.contains_key(key.into()) {
-                cache_guard.insert(key.into(), CacheVal::Stream(StreamCacheVal { stream: vec![] }));
-            }
-
-            match cache_guard.get_mut(key.into()) {
-                Some(CacheVal::Stream(cache_stream)) => {
-                    if let Some(RespType::String(entry_id)) = iter.next() {
-                        let mut entry_id = String::from(entry_id);
-                        if entry_id.eq("*") {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis();
-                            entry_id = format!("{}-*", now);
-                        }
-                        let parts: Vec<&str> = entry_id.split('-').collect();
-                        if parts.len() != 2 {
-                            return create_basic_err_resp("ERR Invalid stream ID format".to_string());
-                        }
-
-                        if entry_id == "0-0" {
-                            return create_basic_err_resp("ERR The ID specified in XADD must be greater than 0-0".to_string());
-                        }
-                        
-                        let stream_id = parts[1];
-                        let final_id_sequence = match (stream_id, cache_stream.stream.is_empty()) {
-                            ("*", true) => if parts[0] == "0" { 1 } else { 0 },
-                            ("*", false) => {
-                                let last_id = &cache_stream.stream.last().unwrap().id;
-                                let last_id_parts: Vec<&str> = last_id.split('-').collect();
-                                if last_id_parts[0] == parts[0] {
-                                    let last_id_sequence = last_id_parts[1].parse::<i64>().unwrap_or(0);
-                                    last_id_sequence + 1    
-                                } else {
-                                    if parts[0] == "0" { 1 } else { 0 }
-                                }
-                                
-                            },
-                            (val, _) => val.parse::<i64>().unwrap_or(0)
-                        };
-
-                        let entry_id = format!("{}-{}", parts[0], final_id_sequence);
-
-                        if !cache_stream.stream.is_empty() {
-                            let last_id = &cache_stream.stream.last().unwrap().id;
-                            if entry_id <= last_id.clone() {
-                                return create_basic_err_resp("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string());
-                            }
-                        }
-
-                        let mut kvs: Vec<KeyVal> = vec![];
-                        loop {
-                            match (iter.next(), iter.next()) {
-                                (Some(RespType::String(entry_key)), Some(RespType::String(entry_val))) => {
-                                    kvs.push(KeyVal { key: entry_key.to_string(), val: entry_val.to_string() });
-                                },
-                                _ => break
-                            }
-                        }
-                        
-                        cache_stream.stream.push(StreamItem { id: entry_id.clone().into(), key_vals: kvs });
-                        return create_bulk_string_resp(entry_id.to_string());
-                    }
-                }
-                _ => return create_null_bulk_string_resp()
-            }
-        }
-
-        return create_null_bulk_string_resp();
-    }
-
-    fn handle_type(&self, iter: &mut Iter<'_, RespType>) -> String {
-        let cache_guard = self.cache.lock().unwrap();
-        if let Some(RespType::String(key)) = iter.next() {
-            let value = cache_guard.get(key);
-            match value {
-                Some(CacheVal::String(_)) => return create_simple_string_resp("string".to_string()),
-                Some(CacheVal::List(_)) => return create_simple_string_resp("list".to_string()),
-                Some(CacheVal::Stream(_)) => return create_simple_string_resp("stream".to_string()),
-                None => return create_simple_string_resp("none".to_string())
-            }
-        }
-
-        return create_simple_string_resp("none".to_string());
-    }
-
-    fn handle_get(&self, iter: &mut Iter<'_, RespType>) -> Option<String> {
-        let cache_guard = self.cache.lock().unwrap();
-        if let Some(RespType::String(key)) = iter.next() {
-            let value = cache_guard.get(key);
-            return match value {
-                Some(CacheVal::String(v)) =>  {
-                    match v.expiry_time {
-                        Some(exp) => {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis();
-                            if now < exp {
-                                Some(create_simple_string_resp(v.val.to_string()))
-                            } else {
-                                Some(create_null_bulk_string_resp())
-                            }
-                        },
-                        None => Some(create_simple_string_resp(v.val.to_string()))
-                    }
-                }
-                _ => Some(create_null_bulk_string_resp())
-            }
-        }
-
-        None
-    }
-
-    fn handle_set(&mut self, iter: &mut Iter<'_, RespType>) -> Option<String> {
-        let mut cache_guard = self.cache.lock().unwrap();
-        if let (Some(RespType::String(key)), Some(RespType::String(val))) = (iter.next(), iter.next()) {
-            match (iter.next(), iter.next()) {
-                (Some(RespType::String(px)), Some(RespType::String(exp))) if px.to_lowercase().eq("px") => {
-                    if let Ok(exp_millis) = exp.parse::<u128>() {
-                        let expiry = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + exp_millis;
-                        cache_guard.insert(key.clone(), CacheVal::String(StringCacheVal { val: val.to_string(), expiry_time: Some(expiry) }));
-                        return Some(create_simple_string_resp("OK".to_string()))
-                    } else {
-                        panic!("Invalid expiry time")
-                    }
-                },
-                (_, _) => {
-                    cache_guard.insert(key.clone(), CacheVal::String(StringCacheVal { val: val.to_string(), expiry_time: None }));
-                    return Some(create_simple_string_resp("OK".to_string()));
+    fn extract_num<T>(iter: &mut Iter<'_, RespType>) -> Option<T> where T: FromStr {
+        match iter.next() {
+            Some(RespType::String(int_str)) => {
+                match int_str.parse::<T>() {
+                    Ok(val) => Some(val),
+                    Err(_) => None
                 }
             }
+            _ => None
         }
-
-        None
-    }
-
-    fn handle_llen(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
-        let cache_gaurd = self.cache.lock().unwrap();
-        if let Some(RespType::String(list_key)) = iter.next() {
-
-            match cache_gaurd.get(list_key.into()) {
-                Some(CacheVal::List(val)) => {
-                    return val.list.len();
-                },
-                _ => return 0,
-            }
-        }
-
-        return 0;
-    }
-
-    fn handle_lpop(&mut self, iter: &mut Iter<'_, RespType>) -> String {
-        let mut cache_guard = self.cache.lock().unwrap();
-        if let Some(RespType::String(list_key)) = iter.next() {
-            match cache_guard.get_mut(list_key.into()) {
-                Some(CacheVal::List(val)) if val.list.len() > 0 => {
-                    let mut count_to_pop = 0;
-                    if let Some(RespType::String(count)) = iter.next() {
-                        if let Ok(num) = count.parse::<usize>() {
-                            count_to_pop = num.min(val.list.len());
-                        }
-                    }
-
-                    if count_to_pop == 0 {
-                        let val = val.list.remove(0);
-                        return create_bulk_string_resp(val);
-                    } else {
-                        let mut vals = vec![];
-                        for _ in 0..count_to_pop {
-                            vals.push(val.list.remove(0))
-                        }
-                        let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
-                        return create_array_resp(bulk_strs);
-                    }
-                }
-                _ => return create_null_bulk_string_resp()
-            }
-        }
-
-        return create_null_bulk_string_resp();
-    }
-
-    fn handle_blpop(&mut self, iter: &mut Iter<'_, RespType>) -> String {
-        if let Some(RespType::String(list_key)) = iter.next() {
-            let mut expiration: Option<u128> = None;
-            if let Some(RespType::String(seconds)) = iter.next() {
-                if let Ok(num) = seconds.parse::<f32>() {
-                    if num != 0.0 {
-                        let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis();
-                        expiration = Some(now + ((num * 1000.0) as u128));
-                    }
-                }
-            }
-
-            loop {
-                let mut cache_gaurd = self.cache.lock().unwrap();
-                if !cache_gaurd.contains_key(list_key.into()) {
-                    cache_gaurd.insert(list_key.into(), CacheVal::List(ListCacheVal { list: vec![], block_queue: vec![] }));
-                }
-
-                match cache_gaurd.get_mut(list_key.into()) {
-                    Some(CacheVal::List(list_cache_val)) => {
-                        if list_cache_val.block_queue.len() > 0 && list_cache_val.block_queue.first().is_some_and(|id| !self.id.eq(id)) {
-                            // if there is a line and you are not at the front
-                            if list_cache_val.block_queue.iter().find(|&id| self.id.eq(id)).is_none() {
-                                // add yourself to the queue 
-                                list_cache_val.block_queue.push(self.id.clone());
-                            }
-                        } else {
-                            // you are at the front, do your logic
-                            if list_cache_val.list.len() == 0 {
-                                // no items
-                                if list_cache_val.block_queue.iter().find(|&id| self.id.eq(id)).is_none() {
-                                    // add yourself to the queue 
-                                    list_cache_val.block_queue.push(self.id.clone());
-                                }
-                            } else {
-                                let val = list_cache_val.list.remove(0);
-                                if list_cache_val.block_queue.len() > 0 {
-                                    list_cache_val.block_queue.remove(0);
-                                }
-                                let bulk_strs = vec![create_bulk_string_resp(list_key.into()),create_bulk_string_resp(val)];
-                                return create_array_resp(bulk_strs);
-                            }
-                        }
-
-                        // break if you have waited too long
-                        let now = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap()
-                                        .as_millis();
-                        if expiration.is_some() && now > expiration.unwrap() {
-                            let index = list_cache_val.block_queue.iter().position(|id| self.id.eq(id));
-                            if index.is_some() {
-                                list_cache_val.block_queue.remove(index.unwrap());
-                            }
-                            break;
-                        }
-                    },
-                    _ => panic!("SHOULD NOT GET HERE")
-                }
-            }
-        }
-
-        return create_null_bulk_string_resp();
-    }
-
-    fn handle_rpush(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
-        let mut cache_gaurd = self.cache.lock().unwrap();
-        if let Some(RespType::String(list_key)) = iter.next() {
-            match cache_gaurd.get_mut(list_key.into()) {
-                Some(CacheVal::List(list_cache_val)) => {
-                    while let Some(RespType::String(val)) = iter.next() {
-                        list_cache_val.list.push(val.into());
-                    }
-                    return list_cache_val.list.len();
-                },
-                None => {
-                    let mut list = vec![];
-                    while let Some(RespType::String(val)) = iter.next() {
-                        list.push(val.into());
-                    }
-
-                    let len = list.len();
-                    cache_gaurd.insert(list_key.into(), CacheVal::List(ListCacheVal { list: list, block_queue: vec![] }));
-                    return len;
-                },
-                _ => return 0
-            }
-        }
-
-        return 0;
-    }
-
-    fn handle_lpush(&mut self, iter: &mut Iter<'_, RespType>) -> usize {
-        let mut cache_gaurd = self.cache.lock().unwrap();
-        if let Some(RespType::String(list_key)) = iter.next() {
-            match cache_gaurd.get_mut(list_key.into()) {
-                Some(CacheVal::List(list_cache_val)) => {
-                    while let Some(RespType::String(val)) = iter.next() {
-                        list_cache_val.list.insert(0, val.into());
-                    }
-                    return list_cache_val.list.len();
-                },
-                None => {
-                    let mut list = vec![];
-                    while let Some(RespType::String(val)) = iter.next() {
-                        list.push(val.into());
-                    }
-
-                    let len = list.len();
-                    list.reverse();
-                    cache_gaurd.insert(list_key.into(), CacheVal::List(ListCacheVal { list: list, block_queue: vec![] }));
-                    return len;
-                },
-                _ => return 0
-            }
-        }
-
-        return 0;
-    }
-
-    fn handle_lrange(&self, iter: &mut Iter<'_, RespType>) -> Vec<String> {
-        let cache_gaurd = self.cache.lock().unwrap();
-        if let Some(RespType::String(list_key)) = iter.next() {
-            match cache_gaurd.get(list_key.into()) {
-                Some(CacheVal::List(list_cache_val)) => {
-                    match (iter.next(), iter.next()) {
-                        (Some(RespType::String(start)), Some(RespType::String(end))) => {
-                            if let (Ok(mut start_idx), Ok(mut end_idx)) = (start.parse::<i64>(), end.parse::<i64>()) {
-                                if start_idx < 0 {
-                                    start_idx += list_cache_val.list.len() as i64;
-                                }
-                                if end_idx < 0 {
-                                    end_idx += list_cache_val.list.len() as i64;
-                                }
-                                if start_idx >= list_cache_val.list.len() as i64 || start_idx > end_idx {
-                                    return vec![];
-                                }
-                                
-                                end_idx = end_idx.min(list_cache_val.list.len() as i64 - 1);
-                                start_idx = start_idx.max(0);
-                                return list_cache_val.list[(start_idx as usize)..=(end_idx as usize)].to_vec();
-                            }
-                        },
-                        (_, _) => return vec![]
-                    }
-                }
-                _ => return vec![]
-            }
-        }
-        return vec![];
     }
 }
 
