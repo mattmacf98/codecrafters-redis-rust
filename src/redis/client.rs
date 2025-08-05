@@ -59,7 +59,7 @@ impl Client {
                 if let RespType::String(s) = iter.next().unwrap() {
                     let command = s.to_lowercase();
 
-                    if self.staging_commands && command.ne("exec") {
+                    if self.staging_commands && command.ne("exec") && command.ne("discard") {
                         // only stage commands here
                         let cmd_clone = RespType::Array(resp_types.clone());
                         self.staged_commands.push(cmd_clone);
@@ -71,6 +71,15 @@ impl Client {
                             self.staging_commands = true;
                             return create_simple_string_resp("OK".into());
                         },
+                        "discard" => {
+                            if self.staging_commands {
+                                self.staging_commands = false;
+                                self.staged_commands.clear();
+                                return create_simple_string_resp("OK".into());
+                            } else {
+                                return create_basic_err_resp("ERR DISCARD without MULTI".to_string());
+                            }
+                        }
                         "exec" => {
                             if self.staging_commands {
                                 self.staging_commands = false;
