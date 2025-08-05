@@ -22,14 +22,18 @@ impl XreadCommand {
 
 impl RedisCommand for XreadCommand {
     fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
-        let expiration = if self.timeout_ms.is_some() {
-            let now = std::time::SystemTime::now()
+        let expiration = match  self.timeout_ms {
+            Some(ms) if ms == 0 => {
+                Some(u128::MAX)
+            },
+            Some(ms) => {
+                let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_millis();
-            Some(now + self.timeout_ms.unwrap())
-        } else {
-            None
+                Some(now + ms)
+            }
+            None => None
         };
 
         loop {
