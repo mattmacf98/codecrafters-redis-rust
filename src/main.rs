@@ -43,9 +43,7 @@ fn handle_client(mut stream: TcpStream, mut client: Client) {
         match resp_res {
             Ok(res) => {
                 let res = client.handle_command(res.0);
-                if let Some(message) = res {
-                    stream.write_all(message.as_bytes()).unwrap();
-                }
+                stream.write_all(res.as_bytes()).unwrap();
             },
             Err(e) => panic!("ERROR {:?}", e),
         };
