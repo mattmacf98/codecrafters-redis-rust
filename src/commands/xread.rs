@@ -36,10 +36,23 @@ impl RedisCommand for XreadCommand {
             None => None
         };
 
+        let mut start_id_exclusive = "0-0".to_string();
+
+        if self.start_id_exclusive.eq("$") {
+            let cache_guard = self.cache.lock().unwrap();
+            if let Some(CacheVal::Stream(cache_stream)) = cache_guard.get(&self.stream_key) {
+                if let Some(stream_item) = cache_stream.stream.last() {
+                    start_id_exclusive = stream_item.id.clone();
+                }
+            }
+        } else {
+            start_id_exclusive = self.start_id_exclusive.clone();
+        }
+
         loop {
             let cache_guard = self.cache.lock().unwrap();
             if let Some(CacheVal::Stream(cache_stream)) = cache_guard.get(&self.stream_key) {
-                let start_index = cache_stream.stream.iter().position(|item| item.id > self.start_id_exclusive);
+                let start_index = cache_stream.stream.iter().position(|item| item.id > start_id_exclusive);
                 if start_index.is_some() {
                     let entries_to_return = cache_stream.stream[start_index.unwrap()..].to_vec();
 
