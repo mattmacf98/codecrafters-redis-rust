@@ -199,17 +199,34 @@ impl Client {
                                     RespType::String(stream_keyword) if stream_keyword.eq("streams") => true,
                                     _ => panic!("XREAD command expects a end_id")
                                 };
-                                let stream_key = match iter.next().expect("Should have stream key") {
-                                    RespType::String(stream_key) => stream_key,
-                                    _ => panic!("XREAD command expects a stream_key")
-                                };
-                                let start_id = match iter.next().expect("Should have stream start_id") {
-                                    RespType::String(stream_key) => stream_key,
-                                    _ => panic!("XREAD command expects a start_id")
-                                };
+
+                                let num_streams = (resp_types.len() - 2)/ 2;
+                                let mut stream_keys = vec![];
+                                let mut start_ids = vec![];
+                                for _ in 0..num_streams {
+                                    let stream_key = match iter.next().expect("Should have stream key") {
+                                        RespType::String(stream_key) => stream_key,
+                                        _ => panic!("XREAD command expects a stream_key")
+                                    };
+                                    stream_keys.push(stream_key);
+                                }
                                 
-                                let redis_command = XreadCommand::new(stream_key.to_string(), start_id.to_string(), self.cache.clone());
-                                return Some(create_array_resp(vec![redis_command.execute(&mut iter)]));
+                                for _ in 0..num_streams { 
+                                    let start_id = match iter.next().expect("Should have stream start_id") {
+                                        RespType::String(stream_key) => stream_key,
+                                        _ => panic!("XREAD command expects a start_id")
+                                    };
+                                    start_ids.push(start_id);
+                                } 
+                                
+                                let mut stream_responses = vec![];
+
+                                for i in 0..num_streams {
+                                    let redis_command = XreadCommand::new(stream_keys[i].to_string(), start_ids[i].to_string(), self.cache.clone());
+                                    stream_responses.push(redis_command.execute(&mut iter));
+                                }
+                                
+                                return Some(create_array_resp(stream_responses));
                             }
                             _ => {}
                         }
@@ -240,6 +257,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_multi_stream_xread_command() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            let stream_item_one = StreamItem {id: "0-1".into(), key_vals: vec![KeyVal {key: "foo".to_string(), val: "bar".to_string()} ]};
+            let stream_item_two = StreamItem {id: "0-2".into(), key_vals: vec![KeyVal {key: "bar".to_string(), val: "baz".to_string()} ]};
+            let stream_item_three = StreamItem {id: "0-3".into(), key_vals: vec![KeyVal {key: "baz".to_string(), val: "foo".to_string()} ]};
+            cache_guard.insert("stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item_one.clone(), stream_item_two.clone(), stream_item_three.clone()] }));
+            cache_guard.insert("other_stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item_one, stream_item_two, stream_item_three] }));
+        }
+        
+        let cmds = vec![
+            RespType::String("XREAD".to_string()),
+            RespType::String("streams".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("other_stream_key".to_string()),
+            RespType::String("0-2".to_string()),
+            RespType::String("0-1".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("*2\r\n*2\r\n$10\r\nstream_key\r\n*1\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n*2\r\n$16\r\nother_stream_key\r\n*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+    }
+
+    #[test]
     fn test_xread_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         let mut client = Client::new(cache.clone());
@@ -263,7 +310,6 @@ mod tests {
         let res = client.handle_command(cmd);
         assert!(res.is_some());
         let value = res.unwrap();
-        println!("{}", value);
         assert!(value.eq("*1\r\n*2\r\n$10\r\nstream_key\r\n*1\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
     }
 
