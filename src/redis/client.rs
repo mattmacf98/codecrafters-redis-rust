@@ -65,6 +65,13 @@ impl Client {
                                 self.staging_commands = true;
                                 return Some(create_simple_string_resp("OK".into()));
                             },
+                            "exec" => {
+                                if self.staging_commands {
+
+                                } else {
+                                    return Some(create_basic_err_resp("ERR EXEC without MULTI".to_string()));
+                                }
+                            }
                             "ping" => {
                                 let redis_command = PingCommand::new();
                                 return Some(redis_command.execute(&mut iter));
