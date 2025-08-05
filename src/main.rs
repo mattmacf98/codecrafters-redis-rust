@@ -33,9 +33,24 @@ fn main() {
 
     if args.replicaof.is_some() {
         let master_instance_parts: Vec<String> = args.replicaof.clone().expect("should have master").clone().split(" ").map(String::from).collect();
-        let mut master_stream = TcpStream::connect(format!("{}:{}", master_instance_parts[0], master_instance_parts[1])).unwrap();
+        let mut master_stream = TcpStream::connect(format!("{}:{}", master_instance_parts[0].clone(), master_instance_parts[1].clone())).unwrap();
+        
         let ping_message = create_array_resp(vec![create_bulk_string_resp("PING".into())]);
         master_stream.write_all(ping_message.as_bytes()).unwrap();
+
+        let mut response_buf = [0; 512];
+        master_stream.read(&mut response_buf).unwrap();
+        println!("Received from master: {}", String::from_utf8_lossy(&response_buf));
+
+        let replconf_message_one = create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("listening-port".into()), create_bulk_string_resp(args.port.to_string())]);
+        master_stream.write_all(replconf_message_one.as_bytes()).unwrap();
+
+        let mut response_buf = [0; 512];
+        master_stream.read(&mut response_buf).unwrap();
+        println!("Received from master: {}", String::from_utf8_lossy(&response_buf));
+
+        let replconf_message_two = create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("capa".into()), create_bulk_string_resp("psync2".into())]);
+        master_stream.write_all(replconf_message_two.as_bytes()).unwrap();
     }
     
     for stream in listener.incoming() {
