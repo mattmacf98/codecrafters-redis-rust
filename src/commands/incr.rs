@@ -29,6 +29,10 @@ impl RedisCommand for IncrCommand {
                 cache_guard.insert(self.key.clone(), CacheVal::String(StringCacheVal { val: new_val.to_string(), expiry_time: expiry_time }));
                 create_int_resp(new_val)
             }
+            None => {
+                cache_guard.insert(self.key.clone(), CacheVal::String(StringCacheVal { val: "1".to_string(), expiry_time: None }));
+                create_int_resp(1)
+            }
             _ => create_null_bulk_string_resp()
         }
     }

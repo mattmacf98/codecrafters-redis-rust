@@ -293,11 +293,6 @@ mod tests {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         let mut client = Client::new(cache.clone());
 
-        {
-            let mut cache_guard = cache.lock().unwrap();
-            cache_guard.insert("key".to_string(), CacheVal::String(StringCacheVal { val: "0".to_string(), expiry_time: None }));
-        }
-
         let cmds = vec![
             RespType::String("INCR".to_string()),
             RespType::String("key".to_string())
