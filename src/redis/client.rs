@@ -1,3 +1,4 @@
+use core::num;
 use std::{collections::HashMap, slice::Iter, str::FromStr, sync::{Arc, Mutex}};
 
 use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
@@ -195,12 +196,30 @@ impl Client {
                                 return Some(redis_command.execute(&mut iter));
                             },
                             "xread" => {
-                                let _ = match iter.next().expect("Should have streams keyword") {
-                                    RespType::String(stream_keyword) if stream_keyword.eq("streams") => true,
-                                    _ => panic!("XREAD command expects a end_id")
-                                };
+                                let mut timeout_ms = None;
+                                let mut keywords_consumed = 1;
+                                loop {
+                                    let keyword = match iter.next().expect("Should have a keyword") {
+                                        RespType::String(keyword) => keyword,
+                                        _ => panic!("XREAD command expects a keyword first")
+                                    };
+                                    keywords_consumed += 1;
+    
+                                    match keyword.as_str() {
+                                        "streams" => break,
+                                        "block" => {
+                                            timeout_ms = match Self::extract_num(&mut iter) {
+                                                Some(val) => Some(val),
+                                                None => panic!("expected timeout after block keyword")
+                                            };
+                                            keywords_consumed += 1
+                                        }
+                                        _ => panic!("Unrecognized XREAD keyword")
+                                    }
+                                }
+                                
 
-                                let num_streams = (resp_types.len() - 2)/ 2;
+                                let num_streams = (resp_types.len() - keywords_consumed)/ 2;
                                 let mut stream_keys = vec![];
                                 let mut start_ids = vec![];
                                 for _ in 0..num_streams {
@@ -222,11 +241,16 @@ impl Client {
                                 let mut stream_responses = vec![];
 
                                 for i in 0..num_streams {
-                                    let redis_command = XreadCommand::new(stream_keys[i].to_string(), start_ids[i].to_string(), self.cache.clone());
+                                    let redis_command = XreadCommand::new(stream_keys[i].to_string(), timeout_ms, start_ids[i].to_string(), self.cache.clone());
                                     stream_responses.push(redis_command.execute(&mut iter));
                                 }
                                 
-                                return Some(create_array_resp(stream_responses));
+                                if stream_responses.len() == 1 && stream_responses[0].clone().eq(&create_null_bulk_string_resp()) {
+                                    // this is pretty bad spec design by redis to expect a null bulk string if timeout but an array if success, I would have just had it return an empty array or the null bulk string in an array
+                                    return Some(create_null_bulk_string_resp());
+                                } else {
+                                    return Some(create_array_resp(stream_responses));
+                                }
                             }
                             _ => {}
                         }
