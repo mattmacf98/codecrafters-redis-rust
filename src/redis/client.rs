@@ -36,6 +36,8 @@ pub struct StreamItem {
 pub struct Client {
     id: String,
     replica_of: Option<String>,
+    master_repl_id: Option<String>,
+    master_repl_offset: Option<u128>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
     staged_commands: Vec<RespType>,
     staging_commands: bool
@@ -43,10 +45,21 @@ pub struct Client {
 
 impl Client {
     pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, replica_of: Option<String>) -> Self {
+
+        let mut master_repl_id = None;
+        let mut master_repl_offset = None;
+        if replica_of.is_none() {
+            //indicating this is a master instance
+            master_repl_id = Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".into());
+            master_repl_offset = Some(0);
+        }
+
         Client {
             id: uuid::Uuid::new_v4().to_string(),
             replica_of: replica_of,
             staged_commands: vec![],
+            master_repl_offset: master_repl_offset,
+            master_repl_id: master_repl_id,
             staging_commands: false,
             cache: cache
         }
@@ -71,7 +84,7 @@ impl Client {
                     match command.as_str() {
                         "info" => {
                             let role = if self.replica_of.is_none() {"master"} else {"slave"};
-                            let redis_command = InfoCommand::new(role.to_string());
+                            let redis_command = InfoCommand::new(role.to_string(), self.master_repl_id.clone(), self.master_repl_offset.clone());
                             return redis_command.execute(&mut iter);
                         }
                         "multi" => {
