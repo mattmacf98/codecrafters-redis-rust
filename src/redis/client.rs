@@ -35,15 +35,17 @@ pub struct StreamItem {
 }
 pub struct Client {
     id: String,
+    replica_of: Option<String>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
     staged_commands: Vec<RespType>,
     staging_commands: bool
 }
 
 impl Client {
-    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>) -> Self {
+    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, replica_of: Option<String>) -> Self {
         Client {
             id: uuid::Uuid::new_v4().to_string(),
+            replica_of: replica_of,
             staged_commands: vec![],
             staging_commands: false,
             cache: cache
@@ -68,7 +70,8 @@ impl Client {
 
                     match command.as_str() {
                         "info" => {
-                            let redis_command = InfoCommand::new();
+                            let role = if self.replica_of.is_none() {"master"} else {"slave"};
+                            let redis_command = InfoCommand::new(role.to_string());
                             return redis_command.execute(&mut iter);
                         }
                         "multi" => {
@@ -332,7 +335,7 @@ mod tests {
     #[test]
     fn test_transaction_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
 
         let cmds = vec![
             RespType::String("MULTI".to_string())
@@ -370,7 +373,7 @@ mod tests {
     #[test]
     fn test_incr_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
 
         let cmds = vec![
             RespType::String("INCR".to_string()),
@@ -393,7 +396,7 @@ mod tests {
     #[test]
     fn test_multi_stream_xread_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -421,7 +424,7 @@ mod tests {
     #[test]
     fn test_xread_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -446,7 +449,7 @@ mod tests {
     #[test]
     fn test_xrange_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -505,7 +508,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("$15\r\n1526919030474-0\r\n"));
         let cach_gaurd = cache.lock().unwrap();
@@ -523,7 +526,7 @@ mod tests {
     #[test]
     fn test_xadd_command_partial() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -570,7 +573,7 @@ mod tests {
     #[test]
     fn test_xadd_command_full() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -589,7 +592,7 @@ mod tests {
     #[test]
     fn test_xadd_command_validation() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -634,7 +637,7 @@ mod tests {
     #[test]
     fn test_type_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -687,7 +690,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("+OK\r\n"));
         let cach_gaurd = cache.lock().unwrap();
@@ -714,7 +717,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("+OK\r\n"));
         let cache_guard = cache.lock().unwrap();
@@ -739,7 +742,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         {
             let mut cache_guard = cache.lock().unwrap();
             cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: None }));
@@ -757,7 +760,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         {
             let mut cache_guard = cache.lock().unwrap();
             cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: Some(500) }));
@@ -780,7 +783,7 @@ mod tests {
                                     .unwrap()
                                     .as_millis();
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         {
             let mut cache_guard = cache.lock().unwrap();
             cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: Some(now + 60000) }));
@@ -798,7 +801,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("$-1\r\n"));
     }
@@ -808,7 +811,7 @@ mod tests {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         let cmds = vec![RespType::String("PING".to_string())];
         let cmd = RespType::Array(cmds);
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("+PONG\r\n"));
     }
@@ -822,7 +825,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("+hello\r\n"));
     }
@@ -836,7 +839,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq(":0\r\n"));
 
@@ -863,7 +866,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("$-1\r\n"));
 
@@ -900,7 +903,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq(":1\r\n"));
         let cache_guard = cache.lock().unwrap();
@@ -944,7 +947,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq(":3\r\n"));
         let cache_gaurd = cache.lock().unwrap();
@@ -970,7 +973,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq(":3\r\n"));
         let cache_guard = cache.lock().unwrap();
@@ -1013,7 +1016,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         {
             let mut cache_gaurd = cache.lock().unwrap();
             cache_gaurd.insert("list_key".into(), CacheVal::List(ListCacheVal {list: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()], block_queue: vec![]}));
@@ -1033,7 +1036,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
         assert!(res.eq("*0\r\n"));
     }
@@ -1049,7 +1052,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        let mut client = Client::new(cache.clone());
+        let mut client = Client::new(cache.clone(), None);
         {
             let mut cache_gaurd = cache.lock().unwrap();
             cache_gaurd.insert("list_key".into(), CacheVal::List(ListCacheVal {list: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()], block_queue: vec![]}));

@@ -15,6 +15,9 @@ struct Args {
     /// Port to bind the server to
     #[arg(long, default_value = "6379")]
     port: u16,
+    /// Replicate from another Redis server
+    #[arg(long)]
+    replicaof: Option<String>,
 }
 
 fn main() {
@@ -32,7 +35,7 @@ fn main() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                let client = Client::new(cache.clone());
+                let client = Client::new(cache.clone(), args.replicaof.clone());
                 thread::spawn(move || {
                     handle_client(stream, client);
                 });
