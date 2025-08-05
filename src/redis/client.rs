@@ -67,7 +67,11 @@ impl Client {
                             },
                             "exec" => {
                                 if self.staging_commands {
-
+                                    self.staging_commands = false;
+                                    // TODO: iterate through stage commands and execute them
+                                    if self.staged_commands.len() == 0 {
+                                        return  Some(create_array_resp(vec![]));
+                                    }
                                 } else {
                                     return Some(create_basic_err_resp("ERR EXEC without MULTI".to_string()));
                                 }
