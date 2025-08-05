@@ -226,6 +226,14 @@ mod tests {
     fn test_xrange_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         let mut client = Client::new(cache.clone());
+
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            let stream_item_one = StreamItem {id: "0-1".into(), key_vals: vec![KeyVal {key: "foo".to_string(), val: "bar".to_string()} ]};
+            let stream_item_two = StreamItem {id: "0-2".into(), key_vals: vec![KeyVal {key: "bar".to_string(), val: "baz".to_string()} ]};
+            let stream_item_three = StreamItem {id: "0-3".into(), key_vals: vec![KeyVal {key: "baz".to_string(), val: "foo".to_string()} ]};
+            cache_guard.insert("stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item_one, stream_item_two, stream_item_three] }));
+        }
         
         let cmds = vec![
             RespType::String("XRANGE".to_string()),
@@ -235,13 +243,32 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
 
-        {
-            let mut cache_guard = cache.lock().unwrap();
-            let stream_item_one = StreamItem {id: "0-1".into(), key_vals: vec![KeyVal {key: "foo".to_string(), val: "bar".to_string()} ]};
-            let stream_item_two = StreamItem {id: "0-2".into(), key_vals: vec![KeyVal {key: "bar".to_string(), val: "baz".to_string()} ]};
-            let stream_item_three = StreamItem {id: "0-3".into(), key_vals: vec![KeyVal {key: "baz".to_string(), val: "foo".to_string()} ]};
-            cache_guard.insert("stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item_one, stream_item_two, stream_item_three] }));
-        }
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+
+        let cmds = vec![
+            RespType::String("XRANGE".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("-".to_string()),
+            RespType::String("0-2".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("*2\r\n*2\r\n$3\r\n0-1\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n"));
+
+        let cmds = vec![
+            RespType::String("XRANGE".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("0-2".to_string()),
+            RespType::String("+".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
         let res = client.handle_command(cmd);
         assert!(res.is_some());
         let value = res.unwrap();

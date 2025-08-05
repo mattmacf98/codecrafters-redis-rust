@@ -25,8 +25,14 @@ impl RedisCommand for XrangeCommand {
         let cache_guard = self.cache.lock().unwrap();
         match cache_guard.get(&self.stream_key) {
             Some(CacheVal::Stream(cache_stream)) => {
-                let start_index = cache_stream.stream.iter().position(|item| item.id > self.start_id).unwrap_or(1) - 1;
-                let end_index = cache_stream.stream.iter().position(|item| item.id > self.end_id).unwrap_or(cache_stream.stream.len());
+                let start_index = match self.start_id.as_str() {
+                    "-" => 0,
+                    _ => cache_stream.stream.iter().position(|item| item.id > self.start_id).unwrap_or(1) - 1
+                };
+                let end_index = match self.end_id.as_str() {
+                    "+" => cache_stream.stream.len(),
+                    _ => cache_stream.stream.iter().position(|item| item.id > self.end_id).unwrap_or(cache_stream.stream.len())
+                };
                 let entries_to_return = cache_stream.stream[start_index..end_index].to_vec();
 
                 let stream_items: Vec<String> = entries_to_return.iter().map(|item| {
