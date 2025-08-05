@@ -1,7 +1,7 @@
 use core::num;
 use std::{collections::HashMap, slice::Iter, str::FromStr, sync::{Arc, Mutex}};
 
-use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, incr::IncrCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -252,6 +252,14 @@ impl Client {
                                     return Some(create_array_resp(stream_responses));
                                 }
                             }
+                            "incr" => {
+                                let key = match iter.next().expect("Should have key") {
+                                    RespType::String(key) => key,
+                                    _ => panic!("INCR command expects a string key")
+                                };
+                                let redis_command = IncrCommand::new(key.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            }
                             _ => {}
                         }
                     } 
@@ -279,6 +287,38 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_incr_command() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.insert("key".to_string(), CacheVal::String(StringCacheVal { val: "0".to_string(), expiry_time: None }));
+        }
+
+        let cmds = vec![
+            RespType::String("INCR".to_string()),
+            RespType::String("key".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":1\r\n"));
+
+        let cmds = vec![
+            RespType::String("INCR".to_string()),
+            RespType::String("key".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq(":2\r\n"));
+    }
 
     #[test]
     fn test_multi_stream_xread_command() {

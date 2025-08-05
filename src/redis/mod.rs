@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 pub mod client;
 
 pub fn create_simple_string_resp(str: String) -> String {
@@ -17,7 +19,7 @@ pub fn create_null_bulk_string_resp() -> String {
     return "$-1\r\n".to_string();
 }
 
-pub fn create_int_resp(n: usize) -> String {
+pub fn create_int_resp<T>(n: T) -> String where T : Display {
     return format!(":{}\r\n", n);
 }
 
