@@ -16,6 +16,7 @@ pub mod xadd;
 pub mod xrange;
 pub mod xread;
 pub mod incr;
+pub mod info;
 
 pub trait RedisCommand {
     fn execute(&self, iter: &mut Iter<'_, RespType>) -> String;

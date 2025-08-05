@@ -1,7 +1,7 @@
 use core::num;
 use std::{collections::HashMap, slice::Iter, str::FromStr, sync::{Arc, Mutex}};
 
-use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, incr::IncrCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, incr::IncrCommand, info::InfoCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -67,6 +67,10 @@ impl Client {
                     }
 
                     match command.as_str() {
+                        "info" => {
+                            let redis_command = InfoCommand::new();
+                            return redis_command.execute(&mut iter);
+                        }
                         "multi" => {
                             self.staging_commands = true;
                             return create_simple_string_resp("OK".into());
