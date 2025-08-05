@@ -11,7 +11,7 @@ impl ReplConfCommand {
 }
 
 impl RedisCommand for ReplConfCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
-        create_simple_string_resp(String::from("OK"))
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
+        vec![create_simple_string_resp("OK".to_string())]
     }
 }

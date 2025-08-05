@@ -19,7 +19,7 @@ impl XaddCommand {
 }
 
 impl RedisCommand for XaddCommand {
-    fn execute(&self, iter: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, iter: &mut Iter<'_, RespType>) -> Vec<String> {
         let mut cache_guard = self.cache.lock().unwrap();
         if !cache_guard.contains_key(&self.stream_key) {
             cache_guard.insert(self.stream_key.clone(), CacheVal::Stream(StreamCacheVal { stream: vec![] }));
@@ -37,11 +37,11 @@ impl RedisCommand for XaddCommand {
                 }
                 let parts: Vec<&str> = entry_id.split('-').collect();
                 if parts.len() != 2 {
-                    return create_basic_err_resp("ERR Invalid stream ID format".to_string());
+                    return vec![create_basic_err_resp("ERR Invalid stream ID format".to_string())];
                 }
 
                 if entry_id == "0-0" {
-                    return create_basic_err_resp("ERR The ID specified in XADD must be greater than 0-0".to_string());
+                    return vec![create_basic_err_resp("ERR The ID specified in XADD must be greater than 0-0".to_string())];
                 }
                 
                 let stream_id = parts[1];
@@ -66,7 +66,7 @@ impl RedisCommand for XaddCommand {
                 if !cache_stream.stream.is_empty() {
                     let last_id = &cache_stream.stream.last().unwrap().id;
                     if entry_id <= last_id.clone() {
-                        return create_basic_err_resp("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string());
+                        return vec![create_basic_err_resp("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string())];
                     }
                 }
 
@@ -81,9 +81,9 @@ impl RedisCommand for XaddCommand {
                 }
                 
                 cache_stream.stream.push(StreamItem { id: entry_id.clone().into(), key_vals: kvs });
-                return create_bulk_string_resp(entry_id.to_string());
+                return vec![create_bulk_string_resp(entry_id.to_string())];
             },
-            _ => return create_null_bulk_string_resp()
+            _ => return vec![create_null_bulk_string_resp()]
         }
     }
 }

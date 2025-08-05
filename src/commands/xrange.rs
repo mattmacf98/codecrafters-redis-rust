@@ -21,7 +21,7 @@ impl XrangeCommand {
 }
 
 impl RedisCommand for XrangeCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
         let cache_guard = self.cache.lock().unwrap();
         match cache_guard.get(&self.stream_key) {
             Some(CacheVal::Stream(cache_stream)) => {
@@ -43,9 +43,9 @@ impl RedisCommand for XrangeCommand {
                     create_array_resp(vec![create_bulk_string_resp(item.id.clone()), create_array_resp(data)])
                 }).collect();
 
-                create_array_resp(stream_items)
+                vec![create_array_resp(stream_items)]
             },
-            _ => return create_array_resp(vec![])
+            _ => vec![create_array_resp(vec![])]
         }
     }
 }

@@ -21,7 +21,7 @@ impl BlpopCommand {
 }
 
 impl RedisCommand for BlpopCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
         let expiration = if self.timeout_seconds != 0.0 {
             let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -60,7 +60,7 @@ impl RedisCommand for BlpopCommand {
                                 list_cache_val.block_queue.remove(0);
                             }
                             let bulk_strs = vec![create_bulk_string_resp(self.list_key.clone()),create_bulk_string_resp(val)];
-                            return create_array_resp(bulk_strs);
+                            return vec![create_array_resp(bulk_strs)];
                         }
                     }
 
@@ -81,6 +81,6 @@ impl RedisCommand for BlpopCommand {
             }
         }
 
-        create_null_bulk_string_resp()
+        vec![create_null_bulk_string_resp()]
     }
 }

@@ -17,14 +17,13 @@ impl TypeCommand {
 }
 
 impl RedisCommand for TypeCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
         let cache_guard = self.cache.lock().unwrap();
-        let value = cache_guard.get(&self.key);
-        match value {
-            Some(CacheVal::String(_)) => return create_simple_string_resp("string".to_string()),
-            Some(CacheVal::List(_)) => return create_simple_string_resp("list".to_string()),
-            Some(CacheVal::Stream(_)) => return create_simple_string_resp("stream".to_string()),
-            None => return create_simple_string_resp("none".to_string())
+        match cache_guard.get(&self.key) {
+            Some(CacheVal::String(_)) => vec![create_simple_string_resp("string".to_string())],
+            Some(CacheVal::List(_)) => vec![create_simple_string_resp("list".to_string())],
+            Some(CacheVal::Stream(_)) => vec![create_simple_string_resp("stream".to_string())],
+            None => vec![create_simple_string_resp("none".to_string())]
         }
     }
 }

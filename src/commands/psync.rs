@@ -17,7 +17,10 @@ impl PsyncCommand {
 }
 
 impl RedisCommand for PsyncCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
-        return create_simple_string_resp(format!("FULLRESYNC {} {}", self.master_repl_id, self.master_repl_offset))
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
+        return vec![
+            create_simple_string_resp(format!("FULLRESYNC {} {}", self.master_repl_id, self.master_repl_offset)),
+            "EMPTY_RDB".into()
+        ]
     }
 }

@@ -67,7 +67,7 @@ impl Client {
         }
     }
 
-    pub fn handle_command(&mut self, cmd: RespType) -> String {
+    pub fn handle_command(&mut self, cmd: RespType) -> Vec<String> {
 
         match cmd {
             RespType::Array(resp_types) => {
@@ -80,7 +80,7 @@ impl Client {
                         // only stage commands here
                         let cmd_clone = RespType::Array(resp_types.clone());
                         self.staged_commands.push(cmd_clone);
-                        return create_simple_string_resp("QUEUED".into());
+                        return vec![create_simple_string_resp("QUEUED".into())];
                     }
 
                     match command.as_str() {
@@ -99,15 +99,15 @@ impl Client {
                         }
                         "multi" => {
                             self.staging_commands = true;
-                            return create_simple_string_resp("OK".into());
+                            return vec![create_simple_string_resp("OK".into())];
                         },
                         "discard" => {
                             if self.staging_commands {
                                 self.staging_commands = false;
                                 self.staged_commands.clear();
-                                return create_simple_string_resp("OK".into());
+                                return vec![create_simple_string_resp("OK".into())];
                             } else {
-                                return create_basic_err_resp("ERR DISCARD without MULTI".to_string());
+                                return vec![create_basic_err_resp("ERR DISCARD without MULTI".to_string())];
                             }
                         }
                         "exec" => {
@@ -119,9 +119,9 @@ impl Client {
                                     results.push(res);
                                 }
                                 self.staged_commands.clear();
-                                return create_array_resp(results);
+                                return vec![create_array_resp(results.into_iter().flatten().collect())];
                             } else {
-                                return create_basic_err_resp("ERR EXEC without MULTI".to_string());
+                                return vec![create_basic_err_resp("ERR EXEC without MULTI".to_string())];
                             }
                         }
                         "ping" => {
@@ -313,11 +313,11 @@ impl Client {
                                 stream_responses.push(redis_command.execute(&mut iter));
                             }
                             
-                            if stream_responses.len() == 1 && stream_responses[0].clone().eq(&create_null_bulk_string_resp()) {
+                            if stream_responses.len() == 1 && stream_responses[0].clone()[0].eq(&create_null_bulk_string_resp()) {
                                 // this is pretty bad spec design by redis to expect a null bulk string if timeout but an array if success, I would have just had it return an empty array or the null bulk string in an array
-                                return create_null_bulk_string_resp();
+                                return vec![create_null_bulk_string_resp()];
                             } else {
-                                return create_array_resp(stream_responses);
+                                return vec![create_array_resp(stream_responses.into_iter().flatten().collect())];
                             }
                         }
                         "incr" => {
@@ -366,7 +366,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq("+OK\r\n"));
+        assert!(res[0].eq("+OK\r\n"));
 
         let cmds = vec![
             RespType::String("SET".to_string()),
@@ -375,7 +375,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+QUEUED\r\n"));
+        assert!(res[0].eq("+QUEUED\r\n"));
 
         let cmds = vec![
             RespType::String("INCR".to_string()),
@@ -383,14 +383,14 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+QUEUED\r\n"));
+        assert!(res[0].eq("+QUEUED\r\n"));
 
         let cmds = vec![
             RespType::String("EXEC".to_string())
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("*2\r\n+OK\r\n:42\r\n"));
+        assert!(res[0].eq("*2\r\n+OK\r\n:42\r\n"));
     }
 
     #[test]
@@ -405,7 +405,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq(":1\r\n"));
+        assert!(res[0].eq(":1\r\n"));
 
         let cmds = vec![
             RespType::String("INCR".to_string()),
@@ -413,7 +413,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq(":2\r\n"));
+        assert!(res[0].eq(":2\r\n"));
     }
 
     #[test]
@@ -441,7 +441,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq("*2\r\n*2\r\n$10\r\nstream_key\r\n*1\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n*2\r\n$16\r\nother_stream_key\r\n*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+        assert!(res[0].eq("*2\r\n*2\r\n$10\r\nstream_key\r\n*1\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n*2\r\n$16\r\nother_stream_key\r\n*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
     }
 
     #[test]
@@ -466,7 +466,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq("*1\r\n*2\r\n$10\r\nstream_key\r\n*1\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+        assert!(res[0].eq("*1\r\n*2\r\n$10\r\nstream_key\r\n*1\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
     }
 
     #[test]
@@ -491,7 +491,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq("*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+        assert!(res[0].eq("*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
 
         let cmds = vec![
             RespType::String("XRANGE".to_string()),
@@ -502,7 +502,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq("*2\r\n*2\r\n$3\r\n0-1\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n"));
+        assert!(res[0].eq("*2\r\n*2\r\n$3\r\n0-1\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n"));
 
         let cmds = vec![
             RespType::String("XRANGE".to_string()),
@@ -513,7 +513,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq("*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+        assert!(res[0].eq("*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
     }
 
     #[test]
@@ -533,7 +533,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("$15\r\n1526919030474-0\r\n"));
+        assert!(res[0].eq("$15\r\n1526919030474-0\r\n"));
         let cach_gaurd = cache.lock().unwrap();
         assert!(cach_gaurd.contains_key("stream_key"));
         let cache_val = cach_gaurd.get("stream_key").unwrap();
@@ -560,7 +560,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("$3\r\n0-1\r\n"));
+        assert!(res[0].eq("$3\r\n0-1\r\n"));
 
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -571,8 +571,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        println!("{}", res);
-        assert!(res.eq("$3\r\n1-0\r\n"));
+        assert!(res[0].eq("$3\r\n1-0\r\n"));
         
         
         {
@@ -590,7 +589,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("$3\r\n2-2\r\n"));
+        assert!(res[0].eq("$3\r\n2-2\r\n"));
     }
 
     #[test]
@@ -607,7 +606,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        let parts: Vec<&str>  = res.split("\r\n").collect();
+        let parts: Vec<&str>  = res[0].split("\r\n").collect();
         let id_parts: Vec<&str> = parts[1].split("-").collect();
         assert!(id_parts[1].eq("0"));
     }
@@ -626,7 +625,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("-ERR The ID specified in XADD must be greater than 0-0\r\n"));
+        assert!(res[0].eq("-ERR The ID specified in XADD must be greater than 0-0\r\n"));
         
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -643,7 +642,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"));
+        assert!(res[0].eq("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"));
 
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -654,7 +653,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"));
+        assert!(res[0].eq("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"));
     }
 
     #[test]
@@ -675,7 +674,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+string\r\n"));
+        assert!(res[0].eq("+string\r\n"));
 
         let cmds = vec![
             RespType::String("TYPE".to_string()),
@@ -683,7 +682,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+list\r\n"));
+        assert!(res[0].eq("+list\r\n"));
 
         let cmds = vec![
             RespType::String("TYPE".to_string()),
@@ -691,7 +690,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+stream\r\n"));
+        assert!(res[0].eq("+stream\r\n"));
 
         let cmds = vec![
             RespType::String("TYPE".to_string()),
@@ -699,7 +698,7 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+none\r\n"));
+        assert!(res[0].eq("+none\r\n"));
     }
 
     #[test]
@@ -715,7 +714,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+OK\r\n"));
+        assert!(res[0].eq("+OK\r\n"));
         let cach_gaurd = cache.lock().unwrap();
         assert!(cach_gaurd.contains_key("foo"));
         let cache_val = cach_gaurd.get("foo").unwrap();
@@ -742,7 +741,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+OK\r\n"));
+        assert!(res[0].eq("+OK\r\n"));
         let cache_guard = cache.lock().unwrap();
         assert!(cache_guard.contains_key("foo"));
         let cache_val = cache_guard.get("foo").unwrap();
@@ -771,7 +770,7 @@ mod tests {
             cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: None }));
         }
         let res = client.handle_command(cmd);
-        assert!(res.eq("+bar\r\n"));
+        assert!(res[0].eq("+bar\r\n"));
     }
 
     #[test]
@@ -789,7 +788,7 @@ mod tests {
             cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: Some(500) }));
         }
         let res = client.handle_command(cmd);
-        assert!(res.eq("$-1\r\n"));
+        assert!(res[0].eq("$-1\r\n"));
     }
 
     #[test]
@@ -812,7 +811,7 @@ mod tests {
             cache_guard.insert("foo".to_string(), CacheVal::String(StringCacheVal { val: "bar".to_string(), expiry_time: Some(now + 60000) }));
         }
         let res = client.handle_command(cmd);
-        assert!(res.eq("+bar\r\n"));
+        assert!(res[0].eq("+bar\r\n"));
     }
 
     #[test]
@@ -826,7 +825,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("$-1\r\n"));
+        assert!(res[0].eq("$-1\r\n"));
     }
 
     #[test]
@@ -836,7 +835,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+PONG\r\n"));
+        assert!(res[0].eq("+PONG\r\n"));
     }
 
     #[test]
@@ -850,7 +849,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("+hello\r\n"));
+        assert!(res[0].eq("+hello\r\n"));
     }
 
     #[test]
@@ -864,7 +863,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq(":0\r\n"));
+        assert!(res[0].eq(":0\r\n"));
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -877,7 +876,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq(":6\r\n"));
+        assert!(res[0].eq(":6\r\n"));
     }
 
     #[test]
@@ -891,7 +890,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("$-1\r\n"));
+        assert!(res[0].eq("$-1\r\n"));
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -905,7 +904,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq("*2\r\n$1\r\na\r\n$1\r\nb\r\n"));
+        assert!(res[0].eq("*2\r\n$1\r\na\r\n$1\r\nb\r\n"));
         let cache_guard = cache.lock().unwrap();
         match cache_guard.get("list_key".into()) {
             Some(CacheVal::List(val)) => {
@@ -928,7 +927,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq(":1\r\n"));
+        assert!(res[0].eq(":1\r\n"));
         let cache_guard = cache.lock().unwrap();
         match cache_guard.get("list_key".into()) {
             Some(CacheVal::List(val)) => {
@@ -947,7 +946,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq(":2\r\n"));
+        assert!(res[0].eq(":2\r\n"));
         let cache_guard = cache.lock().unwrap();
         match cache_guard.get("list_key".into()) {
             Some(CacheVal::List(val)) => {
@@ -972,7 +971,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq(":3\r\n"));
+        assert!(res[0].eq(":3\r\n"));
         let cache_gaurd = cache.lock().unwrap();
         match cache_gaurd.get("list_key".into()) {
             Some(CacheVal::List(val)) => {
@@ -998,7 +997,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq(":3\r\n"));
+        assert!(res[0].eq(":3\r\n"));
         let cache_guard = cache.lock().unwrap();
         match cache_guard.get("list_key".into()) {
             Some(CacheVal::List(val)) => {
@@ -1017,7 +1016,7 @@ mod tests {
         let cmd = RespType::Array(cmds);
 
         let res = client.handle_command(cmd);
-        assert!(res.eq(":4\r\n"));
+        assert!(res[0].eq(":4\r\n"));
         let cache_guard = cache.lock().unwrap();
         match cache_guard.get("list_key".into()) {
             Some(CacheVal::List(val)) => {
@@ -1045,7 +1044,7 @@ mod tests {
             cache_gaurd.insert("list_key".into(), CacheVal::List(ListCacheVal {list: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()], block_queue: vec![]}));
         }
         let res = client.handle_command(cmd);
-        assert!(res.eq("*3\r\n$1\r\nc\r\n$1\r\nd\r\n$1\r\ne\r\n"));
+        assert!(res[0].eq("*3\r\n$1\r\nc\r\n$1\r\nd\r\n$1\r\ne\r\n"));
     }
 
     #[test]
@@ -1061,7 +1060,7 @@ mod tests {
 
         let mut client = Client::new(cache.clone(), None);
         let res = client.handle_command(cmd);
-        assert!(res.eq("*0\r\n"));
+        assert!(res[0].eq("*0\r\n"));
     }
 
     #[test]
@@ -1081,6 +1080,6 @@ mod tests {
             cache_gaurd.insert("list_key".into(), CacheVal::List(ListCacheVal {list: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()], block_queue: vec![]}));
         }
         let res = client.handle_command(cmd);
-        assert!(res.eq("*3\r\n$1\r\nc\r\n$1\r\nd\r\n$1\r\ne\r\n"));
+        assert!(res[0].eq("*3\r\n$1\r\nc\r\n$1\r\nd\r\n$1\r\ne\r\n"));
     }
 }

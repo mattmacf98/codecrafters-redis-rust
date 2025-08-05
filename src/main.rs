@@ -92,8 +92,16 @@ fn handle_client(mut stream: TcpStream, mut client: Client) {
         let resp_res = RespType::parse(&buffer, 0);
         match resp_res {
             Ok(res) => {
-                let res = client.handle_command(res.0);
-                stream.write_all(res.as_bytes()).unwrap();
+                let commands = client.handle_command(res.0);
+                for command in commands {
+                    if command.eq("EMPTY_RDB") {
+                        let file = include_bytes!("../empty.rdb");
+                        stream.write_all(format!("${}\r\n", file.len()).as_bytes()).unwrap();
+                        stream.write_all(file).unwrap();
+                    } else {
+                        stream.write_all(command.as_bytes()).unwrap();
+                    }
+                }
             },
             Err(e) => panic!("ERROR {:?}", e),
         };

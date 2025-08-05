@@ -21,15 +21,15 @@ impl SetCommand {
 }
 
 impl RedisCommand for SetCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
         let mut cache_guard = self.cache.lock().unwrap();
         if let Some(exp_milis) = self.expiration {
             let expiry = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + exp_milis;
             cache_guard.insert(self.key.clone(), CacheVal::String(StringCacheVal { val: self.value.clone(), expiry_time: Some(expiry) }));
-            return create_simple_string_resp("OK".to_string())
+            return vec![create_simple_string_resp("OK".to_string())]
         } else {
             cache_guard.insert(self.key.clone(), CacheVal::String(StringCacheVal { val: self.value.clone(), expiry_time: None }));
-            return create_simple_string_resp("OK".to_string());
+            return vec![create_simple_string_resp("OK".to_string())];
         }
     }
 }

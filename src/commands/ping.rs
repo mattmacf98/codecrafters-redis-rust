@@ -11,7 +11,7 @@ impl PingCommand {
 }
 
 impl RedisCommand for PingCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
-        create_simple_string_resp(String::from("PONG"))
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
+        vec![create_simple_string_resp(String::from("PONG"))]
     }
 }

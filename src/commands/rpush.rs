@@ -17,14 +17,14 @@ impl RpushCommand {
 }
 
 impl RedisCommand for RpushCommand {
-    fn execute(&self, iter: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, iter: &mut Iter<'_, RespType>) -> Vec<String> {
         let mut cache_gaurd = self.cache.lock().unwrap();
         return match cache_gaurd.get_mut(&self.list_key) {
             Some(CacheVal::List(list_cache_val)) => {
                 while let Some(RespType::String(val)) = iter.next() {
                     list_cache_val.list.push(val.into());
                 }
-                create_int_resp(list_cache_val.list.len())
+                vec![create_int_resp(list_cache_val.list.len())]
             },
             None => {
                 let mut list = vec![];
@@ -34,9 +34,9 @@ impl RedisCommand for RpushCommand {
 
                 let len = list.len();
                 cache_gaurd.insert(self.list_key.clone(), CacheVal::List(ListCacheVal { list: list, block_queue: vec![] }));
-                create_int_resp(len)
+                vec![create_int_resp(len)]
             },
-            _ => create_int_resp(0)
+            _ => vec![create_int_resp(0)]
         }
     }
 }

@@ -21,5 +21,5 @@ pub mod replconf;
 pub mod psync;
 
 pub trait RedisCommand {
-    fn execute(&self, iter: &mut Iter<'_, RespType>) -> String;
+    fn execute(&self, iter: &mut Iter<'_, RespType>) -> Vec<String>;
 }

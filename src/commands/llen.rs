@@ -17,13 +17,13 @@ impl LlenCommand {
 }
 
 impl RedisCommand for LlenCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
         let cache_guard = self.cache.lock().unwrap();
         return match cache_guard.get(&self.list_key) {
             Some(CacheVal::List(val)) => {
-                return create_int_resp(val.list.len())
+                return vec![create_int_resp(val.list.len())]
             },
-            _ =>  create_int_resp(0)
+            _ =>  vec![create_int_resp(0)]
         }
     }
 }

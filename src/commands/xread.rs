@@ -21,7 +21,7 @@ impl XreadCommand {
 }
 
 impl RedisCommand for XreadCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
         let expiration = match  self.timeout_ms {
             Some(ms) if ms == 0 => {
                 Some(u128::MAX)
@@ -65,7 +65,7 @@ impl RedisCommand for XreadCommand {
                     }).collect();
 
                     if stream_items.len() > 0 {
-                        return create_array_resp(vec![create_bulk_string_resp(self.stream_key.clone()), create_array_resp(stream_items)]);
+                        return vec![create_array_resp(vec![create_bulk_string_resp(self.stream_key.clone()), create_array_resp(stream_items)])];
                     }
                 }
             }
@@ -79,6 +79,6 @@ impl RedisCommand for XreadCommand {
             }
         }
         
-        create_null_bulk_string_resp()
+        vec![create_null_bulk_string_resp()]
     }
 }

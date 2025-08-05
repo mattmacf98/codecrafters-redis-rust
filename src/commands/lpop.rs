@@ -19,14 +19,14 @@ impl LpopCommand {
 }
 
 impl RedisCommand for LpopCommand {
-    fn execute(&self, _: &mut Iter<'_, RespType>) -> String {
+    fn execute(&self, _: &mut Iter<'_, RespType>) -> Vec<String> {
         let mut cache_guard = self.cache.lock().unwrap();
         return match cache_guard.get_mut(&self.list_key) {
             Some(CacheVal::List(val)) if val.list.len() > 0 => {
                 match self.count {
                     Some(count_to_pop) if count_to_pop == 1 => {
                         let val = val.list.remove(0);
-                        create_bulk_string_resp(val)
+                        vec![create_bulk_string_resp(val)]
                     },
                     Some(count_to_pop) => {
                         let mut vals = vec![];
@@ -34,15 +34,15 @@ impl RedisCommand for LpopCommand {
                             vals.push(val.list.remove(0))
                         }
                         let bulk_strs: Vec<String> = vals.iter().map(|item| create_bulk_string_resp(item.to_string())).collect();
-                        create_array_resp(bulk_strs)
+                        vec![create_array_resp(bulk_strs)]
                     },
                     None => {
                         let val = val.list.remove(0);
-                        create_bulk_string_resp(val)
+                        vec![create_bulk_string_resp(val)]
                     }
                 }
             }
-            _ => create_null_bulk_string_resp()
+            _ => vec![create_null_bulk_string_resp()]
         }
     }
 }
