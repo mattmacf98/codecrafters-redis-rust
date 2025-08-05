@@ -35,18 +35,23 @@ pub struct StreamItem {
 }
 pub struct Client {
     id: String,
-    cache: Arc<Mutex<HashMap<String, CacheVal>>>
+    cache: Arc<Mutex<HashMap<String, CacheVal>>>,
+    staged_commands: Vec<RespType>,
+    staging_commands: bool
 }
 
 impl Client {
     pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>) -> Self {
         Client {
             id: uuid::Uuid::new_v4().to_string(),
+            staged_commands: vec![],
+            staging_commands: false,
             cache: cache
         }
     }
 
     pub fn handle_command(&mut self, cmd: RespType) -> Option<String> {
+
         match cmd {
             RespType::Array(resp_types) => {
                 let mut iter = resp_types.iter();
@@ -56,6 +61,10 @@ impl Client {
                         let command = s.to_lowercase();
 
                         match command.as_str() {
+                            "multi" => {
+                                self.staging_commands = true;
+                                return Some(create_simple_string_resp("OK".into()));
+                            },
                             "ping" => {
                                 let redis_command = PingCommand::new();
                                 return Some(redis_command.execute(&mut iter));
