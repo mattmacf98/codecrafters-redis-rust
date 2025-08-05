@@ -2,7 +2,7 @@
 use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread};
 use clap::Parser;
 
-use crate::{redis::{client::{self, CacheVal, Client, StringCacheVal}, create_simple_string_resp}, resp::types::RespType};
+use crate::{redis::{client::{self, CacheVal, Client, StringCacheVal}, create_array_resp, create_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub mod resp;
 pub mod redis;
@@ -30,6 +30,13 @@ fn main() {
     
     let listener = TcpListener::bind(format!("127.0.0.1:{}", args.port)).unwrap();
     let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    if args.replicaof.is_some() {
+        let master_instance_parts: Vec<String> = args.replicaof.clone().expect("should have master").clone().split(" ").map(String::from).collect();
+        let mut master_stream = TcpStream::connect(format!("{}:{}", master_instance_parts[0], master_instance_parts[1])).unwrap();
+        let ping_message = create_array_resp(vec![create_bulk_string_resp("PING".into())]);
+        master_stream.write_all(ping_message.as_bytes()).unwrap();
+    }
     
     for stream in listener.incoming() {
         match stream {
