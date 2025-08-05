@@ -1,6 +1,6 @@
 use std::{collections::HashMap, slice::Iter, str::FromStr, sync::{Arc, Mutex}};
 
-use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -21,11 +21,13 @@ pub struct StreamCacheVal {
     pub(crate) stream: Vec<StreamItem>
 }
 
+#[derive(Clone)]
 pub struct KeyVal {
     pub(crate) key: String,
     pub(crate) val: String
 }
 
+#[derive(Clone)]
 pub struct StreamItem {
     pub(crate) id: String,
     pub(crate) key_vals: Vec<KeyVal>
@@ -176,6 +178,22 @@ impl Client {
                                 let redis_command = XaddCommand::new(stream_key.to_string(), entry_id.to_string(), self.cache.clone());
                                 return Some(redis_command.execute(&mut iter));
                             },
+                            "xrange" => {
+                                let stream_key = match iter.next().expect("Should have stream key") {
+                                    RespType::String(stream_key) => stream_key,
+                                    _ => panic!("XRANGE command expects a stream_key")
+                                };
+                                let start_id = match iter.next().expect("Should have stream start_id") {
+                                    RespType::String(stream_key) => stream_key,
+                                    _ => panic!("XRANGE command expects a start_id")
+                                };
+                                let end_id = match iter.next().expect("Should have stream end_id") {
+                                    RespType::String(stream_key) => stream_key,
+                                    _ => panic!("XRANGE command expects a end_id")
+                                };
+                                let redis_command = XrangeCommand::new(stream_key.to_string(), start_id.to_string(), end_id.to_string(), self.cache.clone());
+                                return Some(redis_command.execute(&mut iter));
+                            },
                             _ => {}
                         }
                     } 
@@ -205,6 +223,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_xrange_command() {
+        let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
+        let mut client = Client::new(cache.clone());
+        
+        let cmds = vec![
+            RespType::String("XRANGE".to_string()),
+            RespType::String("stream_key".to_string()),
+            RespType::String("0-2".to_string()),
+            RespType::String("0-3".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+
+        {
+            let mut cache_guard = cache.lock().unwrap();
+            let stream_item_one = StreamItem {id: "0-1".into(), key_vals: vec![KeyVal {key: "foo".to_string(), val: "bar".to_string()} ]};
+            let stream_item_two = StreamItem {id: "0-2".into(), key_vals: vec![KeyVal {key: "bar".to_string(), val: "baz".to_string()} ]};
+            let stream_item_three = StreamItem {id: "0-3".into(), key_vals: vec![KeyVal {key: "baz".to_string(), val: "foo".to_string()} ]};
+            cache_guard.insert("stream_key".to_string(), CacheVal::Stream(StreamCacheVal { stream: vec![stream_item_one, stream_item_two, stream_item_three] }));
+        }
+        let res = client.handle_command(cmd);
+        assert!(res.is_some());
+        let value = res.unwrap();
+        assert!(value.eq("*2\r\n*2\r\n$3\r\n0-2\r\n*2\r\n$3\r\nbar\r\n$3\r\nbaz\r\n*2\r\n$3\r\n0-3\r\n*2\r\n$3\r\nbaz\r\n$3\r\nfoo\r\n"));
+    }
+
+    #[test]
     fn test_xadd_command() {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         
@@ -223,7 +267,6 @@ mod tests {
         let res = client.handle_command(cmd);
         assert!(res.is_some());
         let value = res.unwrap();
-        println!("{}", value);
         assert!(value.eq("$15\r\n1526919030474-0\r\n"));
         let cach_gaurd = cache.lock().unwrap();
         assert!(cach_gaurd.contains_key("stream_key"));

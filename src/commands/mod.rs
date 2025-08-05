@@ -13,6 +13,7 @@ pub mod lpop;
 pub mod blpop;
 pub mod type_command;
 pub mod xadd;
+pub mod xrange;
 
 pub trait RedisCommand {
     fn execute(&self, iter: &mut Iter<'_, RespType>) -> String;
