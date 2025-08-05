@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread};
+use clap::Parser;
 
 use crate::{redis::{client::{self, CacheVal, Client, StringCacheVal}, create_simple_string_resp}, resp::types::RespType};
 
@@ -7,11 +8,24 @@ pub mod resp;
 pub mod redis;
 pub mod commands;
 
+#[derive(Parser)]
+#[command(name = "codecrafters-redis")]
+#[command(about = "A Redis server implementation")]
+struct Args {
+    /// Port to bind the server to
+    #[arg(long, default_value = "6379")]
+    port: u16,
+}
+
 fn main() {
+    // Parse command line arguments
+    let args = Args::parse();
+    
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
+    println!("Starting Redis server on port {}", args.port);
     
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", args.port)).unwrap();
     let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
     
     for stream in listener.incoming() {
