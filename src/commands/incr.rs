@@ -1,6 +1,6 @@
 use std::{collections::HashMap, slice::Iter, sync::{Arc, Mutex}};
 
-use crate::{commands::RedisCommand, redis::{client::{CacheVal, StringCacheVal}, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::RedisCommand, redis::{client::{CacheVal, StringCacheVal}, create_basic_err_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub struct IncrCommand {
     key: String,
@@ -24,7 +24,7 @@ impl RedisCommand for IncrCommand {
                 let expiry_time = v.expiry_time;
                 let new_val = match v.val.parse::<i64>() {
                     Ok(v) => v + 1,
-                    Err(_) => return create_null_bulk_string_resp(),
+                    Err(_) => return create_basic_err_resp("ERR value is not an integer or out of range".to_string()),
                 };
                 cache_guard.insert(self.key.clone(), CacheVal::String(StringCacheVal { val: new_val.to_string(), expiry_time: expiry_time }));
                 create_int_resp(new_val)
@@ -33,7 +33,7 @@ impl RedisCommand for IncrCommand {
                 cache_guard.insert(self.key.clone(), CacheVal::String(StringCacheVal { val: "1".to_string(), expiry_time: None }));
                 create_int_resp(1)
             }
-            _ => create_null_bulk_string_resp()
+            _ => create_basic_err_resp("ERR value is not an integer or out of range".to_string())
         }
     }
 }
