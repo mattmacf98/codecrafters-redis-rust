@@ -26,7 +26,7 @@ impl RedisCommand for ReplConfCommand {
             _ => panic!("REPLCONF command expects a *")
         };
         assert!(star.to_lowercase().eq("*"));
-        return vec![create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("ACK".into()), create_bulk_string_resp("0".into())])]
+        return vec!["SEND_REPLCONF_ACK".into()];
         
     }
 }

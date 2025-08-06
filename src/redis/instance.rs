@@ -80,6 +80,7 @@ impl Instance {
     }
 
     fn handle_master_connection(mut stream: TcpStream, mut client: Client) {
+        let mut master_bytes_consumed = 0;
         loop {
             println!("LOOP");
 
@@ -95,13 +96,19 @@ impl Instance {
                 let resp_res = RespType::parse(&buffer, cur);
                 match resp_res {
                     Ok(res) => {
-                        println!("CLIENT EXECUTING: {:?}", res.0);
-                        let commands = client.handle_command(res.0);
+                        println!("CLIENT EXECUTING: {:?}", &res.0);
+                        
+                        let commands = client.handle_command(res.0.clone());
                         cur = res.1;
                         for command in commands.iter() {
-                            if command.contains("REPLCONF") {
-                                stream.write_all(command.as_bytes()).unwrap();
+                            if command.eq("SEND_REPLCONF_ACK") {
+                                stream.write_all(create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("ACK".into()), create_bulk_string_resp((master_bytes_consumed).to_string())]).as_bytes()).unwrap();
                             }
+                        }
+                        if let RespType::Array(arr) = &res.0 {
+                            let num_bytes = RespType::Array(arr.clone()).to_string().as_bytes().len();
+                            master_bytes_consumed += num_bytes;
+                            println!("Replica has consumed {} bytes from master", master_bytes_consumed);
                         }
                     },
                     Err(e) => {
