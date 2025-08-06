@@ -97,6 +97,7 @@ impl Instance {
                 break;
             }
             let buffer = bytes::BytesMut::from(&buf[..read_count]);
+            println!("received client: {}", String::from_utf8_lossy(&buffer));
             let mut cur = 0;
             while cur < buffer.len() {
                 let resp_res = RespType::parse(&buffer, cur);
