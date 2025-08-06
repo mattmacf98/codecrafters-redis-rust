@@ -155,7 +155,8 @@ impl Client {
                             return vec![create_simple_string_resp("OK".into())];
                         },
                         "wait" => {
-                            return vec![create_int_resp(0)];
+                            let replica_stream_gaurd = self.replica_streams.lock().unwrap();
+                            return vec![create_int_resp(replica_stream_gaurd.len())];
                         }
                         "discard" => {
                             if self.staging_commands {
