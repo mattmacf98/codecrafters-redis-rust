@@ -219,6 +219,7 @@ impl Client {
                                 write_command_gaurd.push(cmd_clone.to_string());
                                 println!("WRITING TO COMMANDS LIST LEN: {}", write_command_gaurd.len());
                             }
+                            println!("EXECUTING SET {} {}", key.to_string(), value.to_string());
                             return redis_command.execute(&mut iter);
                         },
                         "rpush" => {

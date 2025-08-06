@@ -8,6 +8,9 @@ echo -e '*3\r\n$5\r\nBLPOP\r\n$6\r\nbanana\r\n$1\r\n0\r\n' | nc localhost 6379
 
 echo -e '*3\r\n$5\r\nRPUSH\r\n$6\r\nbanana\r\n$10\r\nstrawberry\r\n' | nc localhost 6379
 
+echo -e '*3\r\n$3\r\nSET\r\n$3\r\nbaz\r\n$3\r\n789\r\n' | nc localhost 6379
+echo -e '*2\r\n$3\r\nGET\r\n$3\r\nbaz\r\n' | nc localhost 6379
+
 # XREAD with BLOCK
 echo -e '*6\r\n$5\r\nXREAD\r\n$5\r\nblock\r\n$4\r\n5000\r\n$7\r\nstreams\r\n$6\r\norange\r\n$3\r\n0-1\r\n' | nc localhost 6379
 
