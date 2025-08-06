@@ -5,6 +5,7 @@ pub struct Instance {
     is_master: bool,
     replica_of: Option<String>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
+    write_commands: Arc<Mutex<Vec<String>>>,
     replica_streams: Arc<Mutex<Vec<TcpStream>>>
 }
 
@@ -13,8 +14,9 @@ impl Instance {
         Instance {
              is_master: replica_of.is_none(),
              replica_of: replica_of,
+             replica_streams: Arc::new(Mutex::new(vec![])),
              cache: Arc::new(Mutex::new(HashMap::new())),
-             replica_streams: Arc::new(Mutex::new(vec![]))
+             write_commands: Arc::new(Mutex::new(vec![]))
         }
     }    
 
@@ -31,9 +33,9 @@ impl Instance {
             match stream {
                 Ok(stream) => {
                     println!("accepted new connection");
-                    let client = Client::new(self.cache.clone(), self.replica_of.clone());
+                    let mut client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.replica_of.clone());
                     thread::spawn(move || {
-                        Self::handle_client(stream, client);
+                        client.handle_connection(stream);
                     });
                 }
                 Err(e) => {
@@ -74,33 +76,5 @@ impl Instance {
         let mut response_buf = [0; 512];
         master_stream.read(&mut response_buf).unwrap();
         println!("Received from master: {}", String::from_utf8_lossy(&response_buf));
-    }
-
-    fn handle_client(mut stream: TcpStream, mut client: Client) {
-        loop {
-            let mut buf = [0; 512];
-            let read_count = stream.read(&mut buf).unwrap();
-            if read_count == 0 {
-                break;
-            }
-            let buffer = bytes::BytesMut::from(&buf[..read_count]);
-            println!("received: {}", String::from_utf8_lossy(&buffer));
-            let resp_res = RespType::parse(&buffer, 0);
-            match resp_res {
-                Ok(res) => {
-                    let commands = client.handle_command(res.0);
-                    for command in commands {
-                        if command.eq("EMPTY_RDB") {
-                            let file = include_bytes!("../../empty.rdb");
-                            stream.write_all(format!("${}\r\n", file.len()).as_bytes()).unwrap();
-                            stream.write_all(file).unwrap();
-                        } else {
-                            stream.write_all(command.as_bytes()).unwrap();
-                        }
-                    }
-                },
-                Err(e) => panic!("ERROR {:?}", e),
-            };
-        }
     }
 }

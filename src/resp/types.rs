@@ -1,7 +1,7 @@
 use std::result::Result::Ok;
 use bytes::BytesMut;
 
-use crate::resp::RespError;
+use crate::{redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp}, resp::RespError};
 
 #[derive(Debug, Clone)]
 pub enum RespType {
@@ -14,6 +14,17 @@ pub enum RespType {
 }
 
 impl RespType {
+
+    pub fn to_string(&self) -> String {
+        match self {
+            RespType::String(s) => create_bulk_string_resp(s.to_string()),
+            RespType::Error(e) => create_basic_err_resp(e.to_string()),
+            RespType::Int(i) => create_int_resp(i),
+            RespType::Array(resp_types) => create_array_resp(resp_types.iter().map(|x| x.to_string()).collect()),
+            RespType::NullArray => create_array_resp(vec![]),
+            RespType::NullBulkString => create_null_bulk_string_resp(),
+        }
+    }
     pub fn parse(buffer: &BytesMut, pos: usize) -> Result<(RespType, usize), RespError> {
         let c = buffer[pos] as char;
         match c {
