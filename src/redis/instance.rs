@@ -78,8 +78,8 @@ impl Instance {
         println!("Received from master: {}", String::from_utf8_lossy(&response_buf));
 
         //deump RDB
-        let mut response_buf = [0; 512];
-        master_stream.read(&mut response_buf).unwrap();
+        // let mut response_buf = [0; 512];
+        // master_stream.read(&mut response_buf).unwrap();
 
         let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.replica_of.clone());
         thread::spawn(move || {
@@ -98,13 +98,18 @@ impl Instance {
             }
             let buffer = bytes::BytesMut::from(&buf[..read_count]);
             println!("received client: {}", String::from_utf8_lossy(&buffer));
-            let resp_res = RespType::parse(&buffer, 0);
-            match resp_res {
-                Ok(res) => {
-                    client.handle_command(res.0);
-                },
-                Err(e) => panic!("ERROR {:?}", e),
-            };
+            let mut cur = 0;
+            while cur < buffer.len() {
+                let resp_res = RespType::parse(&buffer, cur);
+                println!("CLIENT: {:?} CUR: {} BUFLEN {}", resp_res.as_ref().unwrap().0, resp_res.as_ref().unwrap().1, buffer.len() );
+                match resp_res {
+                    Ok(res) => {
+                        client.handle_command(res.0);
+                        cur = res.1;
+                    },
+                    Err(e) => panic!("ERROR {:?}", e),
+                };
+            }
         }
     }
 }
