@@ -97,7 +97,7 @@ impl Instance {
                 break;
             }
             let buffer = bytes::BytesMut::from(&buf[..read_count]);
-            println!("received: {}", String::from_utf8_lossy(&buffer));
+            println!("received client: {}", String::from_utf8_lossy(&buffer));
             let resp_res = RespType::parse(&buffer, 0);
             match resp_res {
                 Ok(res) => {
