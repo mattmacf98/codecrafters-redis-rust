@@ -73,14 +73,6 @@ impl Instance {
         let psync_message = create_array_resp(vec![create_bulk_string_resp("PSYNC".into()), create_bulk_string_resp("?".into()), create_bulk_string_resp("-1".into())]);
         master_stream.write_all(psync_message.as_bytes()).unwrap();
 
-        let mut response_buf = [0; 512];
-        master_stream.read(&mut response_buf).unwrap();
-        println!("Received from master: {}", String::from_utf8_lossy(&response_buf));
-
-        //deump RDB
-        // let mut response_buf = [0; 512];
-        // master_stream.read(&mut response_buf).unwrap();
-
         let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.replica_of.clone());
         thread::spawn(move || {
             Self::handle_master_connection(master_stream, client);
@@ -101,14 +93,23 @@ impl Instance {
             let mut cur = 0;
             while cur < buffer.len() {
                 let resp_res = RespType::parse(&buffer, cur);
-                println!("CLIENT: {:?} CUR: {} BUFLEN {}", resp_res.as_ref().unwrap().0, resp_res.as_ref().unwrap().1, buffer.len() );
                 match resp_res {
                     Ok(res) => {
-                        client.handle_command(res.0);
+                        println!("CLIENT EXECUTING: {:?}", res.0);
+                        let commands = client.handle_command(res.0);
                         cur = res.1;
+                        for command in commands.iter() {
+                            if command.contains("REPLCONF") {
+                                stream.write_all(command.as_bytes()).unwrap();
+                            }
+                        }
                     },
-                    Err(e) => panic!("ERROR {:?}", e),
+                    Err(e) => {
+                        println!("ERR: {:?}", e);
+                        cur += 1;
+                    },
                 };
+                println!("{} CONSUMED OUT OF {}", cur, buffer.len());
             }
         }
     }

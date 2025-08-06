@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt::format, io::{Read, Write}, net::TcpStream, 
 use bytes::BytesMut;
 use tokio::stream;
 
-use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::GetCommand, incr::IncrCommand, info::InfoCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, psync::PsyncCommand, replconf::ReplConfCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::{self, GetCommand}, incr::IncrCommand, info::InfoCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, psync::PsyncCommand, replconf::ReplConfCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -424,7 +424,7 @@ impl Client {
                     panic!("UNEXPECTED ARRAY ENTRY")
                 } 
             },
-            _ => panic!("ONLY EXPECTING ARRAY COMMANDS")
+            _ => return vec![]
         }
     }
 

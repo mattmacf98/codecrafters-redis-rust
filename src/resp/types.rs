@@ -10,7 +10,8 @@ pub enum RespType {
     Int(i64),
     Array(Vec<RespType>),
     NullArray,
-    NullBulkString
+    NullBulkString,
+    Other,
 }
 
 impl RespType {
@@ -23,6 +24,7 @@ impl RespType {
             RespType::Array(resp_types) => create_array_resp(resp_types.iter().map(|x| x.to_string()).collect()),
             RespType::NullArray => create_array_resp(vec![]),
             RespType::NullBulkString => create_null_bulk_string_resp(),
+            RespType::Other => "".into()
         }
     }
     pub fn parse(buffer: &BytesMut, pos: usize) -> Result<(RespType, usize), RespError> {
@@ -97,7 +99,7 @@ impl RespType {
         let utf8_str= String::from_utf8(word.to_vec());
         match utf8_str {
             Ok(s) => Ok((RespType::String(s), bytes_read + 2 + (str_size as usize + 1))),
-            Err(_) => Err(RespError::InvalidBulkString(String::from("String not UTF-8")))
+            Err(_) => Ok((RespType::Other, bytes_read + (str_size as usize + 1)))
         }
     }
 
