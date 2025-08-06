@@ -154,6 +154,9 @@ impl Client {
                             self.staging_commands = true;
                             return vec![create_simple_string_resp("OK".into())];
                         },
+                        "wait" => {
+                            return vec![create_int_resp(0)];
+                        }
                         "discard" => {
                             if self.staging_commands {
                                 self.staging_commands = false;
