@@ -1,4 +1,5 @@
 pub mod types;
+pub mod rdb;
 
 #[derive(Debug)]
 pub enum RespError {

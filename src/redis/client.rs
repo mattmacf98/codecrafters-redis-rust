@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt::format, io::{Read, Write}, net::TcpStream, 
 use bytes::BytesMut;
 use tokio::stream;
 
-use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::{self, GetCommand}, incr::IncrCommand, info::InfoCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, psync::PsyncCommand, replconf::ReplConfCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::{self, GetCommand}, incr::IncrCommand, info::InfoCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, psync::PsyncCommand, replconf::ReplConfCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::{rdb::Rdb, types::RespType}};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -170,6 +170,14 @@ impl Client {
                     }
 
                     match command.as_str() {
+                        "keys" => {
+                            // for now always assume the pattern is *
+                            let mut keys = vec![];
+                            for (key, _) in self.cache.lock().unwrap().iter() {
+                                keys.push(key.clone());
+                            }
+                            return vec![create_array_resp(keys.into_iter().map(|x| create_bulk_string_resp(x)).collect())];
+                        }
                         "config" => {
                             let _ = match iter.next().expect("Should have get key") {
                                 RespType::String(get) => get,
@@ -554,6 +562,23 @@ mod tests {
         let ack_replicas = Arc::new(Mutex::new(0));
         let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), ack_replicas.clone(),None, "test_rdb_dir".to_string(), "test_rdb_file".to_string());
         (client, cache, write_commands, replica_streams)
+    }
+
+    #[test]
+    fn test_keys_command() {
+        let (mut client,_ ,_ , _) = instantiate_client();
+        {
+            let mut cache_guard = client.cache.lock().unwrap();
+            cache_guard.insert("key1".to_string(), CacheVal::String(StringCacheVal { val: "value1".to_string(), expiry_time: None }));
+            cache_guard.insert("key2".to_string(), CacheVal::String(StringCacheVal { val: "value2".to_string(), expiry_time: None }));
+        }
+        let cmds = vec![
+            RespType::String("KEYS".to_string()),
+            RespType::String("*".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res[0].eq("*2\r\n$4\r\nkey1\r\n$4\r\nkey2\r\n"));
     }
 
     #[test]

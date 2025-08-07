@@ -1,6 +1,8 @@
 use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread};
 
-use crate::{redis::{client::{self, CacheVal, Client}, create_array_resp, create_bulk_string_resp}, resp::types::RespType};
+use bytes::BytesMut;
+
+use crate::{redis::{client::{self, CacheVal, Client}, create_array_resp, create_bulk_string_resp}, resp::{rdb::Rdb, types::RespType}};
 pub struct Instance {
     is_master: bool,
     rdb_dir: String,
@@ -14,13 +16,23 @@ pub struct Instance {
 
 impl Instance {
     pub fn new(rdb_dir: String, rdb_file: String, replica_of: Option<String>) -> Self {
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let rdb_data = std::fs::read(format!("{}/{}", rdb_dir, rdb_file));
+        match rdb_data {
+            Ok(data) => {
+                let rdb = Rdb::new(BytesMut::from(&data[..]));
+                rdb.apply_to_db(cache.clone());
+            }
+            Err(e) => println!("Error reading RDB file: {} treat as empty", e)
+        }
+
         Instance {
              is_master: replica_of.is_none(),
              replica_of: replica_of,
              rdb_dir: rdb_dir,
              rdb_file: rdb_file,
              replica_streams: Arc::new(Mutex::new(vec![])),
-             cache: Arc::new(Mutex::new(HashMap::new())),
+             cache: cache,
              ack_replicas: Arc::new(Mutex::new(0)),
              write_commands: Arc::new(Mutex::new(vec![]))
         }

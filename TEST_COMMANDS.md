@@ -15,3 +15,9 @@ echo -e '*2\r\n$3\r\nGET\r\n$3\r\nbaz\r\n' | nc localhost 6379
 echo -e '*6\r\n$5\r\nXREAD\r\n$5\r\nblock\r\n$4\r\n5000\r\n$7\r\nstreams\r\n$6\r\norange\r\n$3\r\n0-1\r\n' | nc localhost 6379
 
 echo -e '*5\r\n$4\r\nXADD\r\n$6\r\norange\r\n$3\r\n0-2\r\n$11\r\ntemperature\r\n$2\r\n77\r\n' | nc localhost 6379
+
+
+
+# CONFIG GET
+echo -e '*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$3\r\ndir\r\n' | nc localhost 6379
+echo -e '*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$10\r\ndbfilename\r\n' | nc localhost 6379
