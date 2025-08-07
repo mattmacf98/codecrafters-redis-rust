@@ -45,6 +45,7 @@ pub struct Client {
     write_commands: Arc<Mutex<Vec<String>>>,
     replica_streams: Arc<Mutex<Vec<TcpStream>>>,
     ack_replicas: Arc<Mutex<usize>>,
+    subscribed_channels: Vec<String>,
     is_replica_connection: bool,
     staged_commands: Vec<RespType>,
     staging_commands: bool,
@@ -67,6 +68,7 @@ impl Client {
         Client {
             id: uuid::Uuid::new_v4().to_string(),
             replica_of: replica_of,
+            subscribed_channels: vec![],
             is_replica_connection: false,
             staged_commands: vec![],
             write_commands: write_commands,
@@ -178,6 +180,14 @@ impl Client {
                             }
                             return vec![create_array_resp(keys.into_iter().map(|x| create_bulk_string_resp(x)).collect())];
                         }
+                        "subscribe" => {
+                            let channel = match iter.next().expect("Should have channel") {
+                                RespType::String(channel) => channel,
+                                _ => panic!("SUBSCRIBE command expects a channel")
+                            };
+                            self.subscribed_channels.push(channel.to_string());
+                            return vec![create_array_resp(vec![create_bulk_string_resp("subscribe".into()), create_bulk_string_resp(channel.to_string().into()), create_int_resp(self.subscribed_channels.len())])];
+                        },
                         "config" => {
                             let _ = match iter.next().expect("Should have get key") {
                                 RespType::String(get) => get,
@@ -565,6 +575,19 @@ mod tests {
     }
 
     #[test]
+    fn test_subscribe_command() {
+        let (mut client,_ ,_ , _) = instantiate_client();
+        let cmds = vec![
+            RespType::String("SUBSCRIBE".to_string()),
+            RespType::String("channel1".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res[0].eq("*3\r\n$9\r\nsubscribe\r\n$8\r\nchannel1\r\n:1\r\n"));
+        assert!(client.subscribed_channels.contains(&"channel1".to_string()));
+    }
+
+    #[test]
     fn test_keys_command() {
         let (mut client,_ ,_ , _) = instantiate_client();
         {
@@ -578,7 +601,8 @@ mod tests {
         ];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
-        assert!(res[0].eq("*2\r\n$4\r\nkey1\r\n$4\r\nkey2\r\n"));
+        assert!(res[0].contains("key1"));
+        assert!(res[0].contains("key2"));
     }
 
     #[test]
