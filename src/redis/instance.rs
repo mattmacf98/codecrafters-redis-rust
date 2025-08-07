@@ -3,6 +3,8 @@ use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}
 use crate::{redis::{client::{self, CacheVal, Client}, create_array_resp, create_bulk_string_resp}, resp::types::RespType};
 pub struct Instance {
     is_master: bool,
+    rdb_dir: String,
+    rdb_file: String,
     replica_of: Option<String>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
     write_commands: Arc<Mutex<Vec<String>>>,
@@ -11,10 +13,12 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(replica_of: Option<String>) -> Self {
+    pub fn new(rdb_dir: String, rdb_file: String, replica_of: Option<String>) -> Self {
         Instance {
              is_master: replica_of.is_none(),
              replica_of: replica_of,
+             rdb_dir: rdb_dir,
+             rdb_file: rdb_file,
              replica_streams: Arc::new(Mutex::new(vec![])),
              cache: Arc::new(Mutex::new(HashMap::new())),
              ack_replicas: Arc::new(Mutex::new(0)),
@@ -35,7 +39,10 @@ impl Instance {
             match stream {
                 Ok(stream) => {
                     println!("accepted new connection");
-                    let mut client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.ack_replicas.clone(),  self.replica_of.clone());
+                    let mut client = Client::new(
+                        self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), 
+                        self.ack_replicas.clone(),  self.replica_of.clone(), self.rdb_dir.clone(), self.rdb_file.clone()
+                    );
                     thread::spawn(move || {
                         client.handle_connection(stream);
                     });
@@ -75,7 +82,8 @@ impl Instance {
         let psync_message = create_array_resp(vec![create_bulk_string_resp("PSYNC".into()), create_bulk_string_resp("?".into()), create_bulk_string_resp("-1".into())]);
         master_stream.write_all(psync_message.as_bytes()).unwrap();
 
-        let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.ack_replicas.clone(),  self.replica_of.clone());
+        let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.ack_replicas.clone(),
+          self.replica_of.clone(), self.rdb_dir.clone(), self.rdb_file.clone());
         thread::spawn(move || {
             Self::handle_master_connection(master_stream, client);
         });

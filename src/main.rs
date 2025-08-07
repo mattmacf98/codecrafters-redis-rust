@@ -18,11 +18,17 @@ struct Args {
     /// Replicate from another Redis server
     #[arg(long)]
     replicaof: Option<String>,
+    // RDB dir
+    #[arg(long, default_value = "./")]
+    dir: String,
+    // RDB file
+    #[arg(long, default_value = "dump.rdb")]
+    dbfilename: String,
 }
 
 fn main() {
     // Parse command line arguments
     let args = Args::parse();
-    let instance = Instance::new(args.replicaof.clone());
+    let instance = Instance::new(args.dir.clone(), args.dbfilename.clone(),args.replicaof.clone());
     instance.start(args.port.to_string());
 }

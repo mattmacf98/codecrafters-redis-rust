@@ -47,11 +47,14 @@ pub struct Client {
     ack_replicas: Arc<Mutex<usize>>,
     is_replica_connection: bool,
     staged_commands: Vec<RespType>,
-    staging_commands: bool
+    staging_commands: bool,
+    rdb_dir: String,
+    rdb_file: String,
 }
 
 impl Client {
-    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, write_commands: Arc<Mutex<Vec<String>>>, replica_streams: Arc<Mutex<Vec<TcpStream>>>, ack_replicas: Arc<Mutex<usize>>, replica_of: Option<String>) -> Self {
+    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, write_commands: Arc<Mutex<Vec<String>>>, replica_streams: Arc<Mutex<Vec<TcpStream>>>,
+         ack_replicas: Arc<Mutex<usize>>, replica_of: Option<String>, rdb_dir: String, rdb_file: String) -> Self {
 
         let mut master_repl_id = None;
         let mut master_repl_offset = None;
@@ -72,7 +75,9 @@ impl Client {
             staging_commands: false,
             cache: cache,
             replica_streams: replica_streams,
-            ack_replicas: ack_replicas
+            ack_replicas: ack_replicas,
+            rdb_dir: rdb_dir,
+            rdb_file: rdb_file
         }
     }
 
@@ -143,6 +148,8 @@ impl Client {
     }
 
     fn send_get_ack_request(mut stream: TcpStream) {
+        // what is the redis actual spec about sending GET ACK? some tests expect it to send GETACK immediately after any write is sent to the master node, 
+        // while others got upset and wanted to receieve all sets (coming from multiple requests) to be propagated to the slave before the GETACK is sent.
         thread::sleep(std::time::Duration::from_millis(100));
         stream.write_all(create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("GETACK".into()), create_bulk_string_resp("*".into())]).as_bytes()).unwrap();
     }
@@ -163,6 +170,21 @@ impl Client {
                     }
 
                     match command.as_str() {
+                        "config" => {
+                            let _ = match iter.next().expect("Should have get key") {
+                                RespType::String(get) => get,
+                                _ => panic!("CONFIG command expects a get")
+                            };
+                            let value = match iter.next().expect("Should have value key") {
+                                RespType::String(v) => v,
+                                _ => panic!("CONFIG command expects a value to get")
+                            };
+                            match value.as_str() {
+                                "dir" => vec![create_array_resp(vec![create_bulk_string_resp("dir".into()), create_bulk_string_resp(self.rdb_dir.clone().into())])],
+                                "dbfilename" => vec![create_array_resp(vec![create_bulk_string_resp("dbfilename".into()), create_bulk_string_resp(self.rdb_file.clone().into())])],
+                                _ => panic!("UNKOWN VALUE TO GET")
+                            }
+                        },
                         "psync" => {
                             let redis_command = PsyncCommand::new(self.master_repl_id.clone().expect("master should have id"), self.master_repl_offset.clone().expect("master should have offset"));
                             self.is_replica_connection = true;
@@ -530,8 +552,29 @@ mod tests {
         let write_commands = Arc::new(Mutex::new(vec![]));
         let replica_streams = Arc::new(Mutex::new(vec![]));
         let ack_replicas = Arc::new(Mutex::new(0));
-        let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), ack_replicas.clone(),None);
+        let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), ack_replicas.clone(),None, "test_rdb_dir".to_string(), "test_rdb_file".to_string());
         (client, cache, write_commands, replica_streams)
+    }
+
+    #[test]
+    fn test_config_command() {
+        let (mut client,_ ,_ , _) = instantiate_client();
+        let cmds = vec![
+            RespType::String("CONFIG".to_string()),
+            RespType::String("GET".to_string()),
+            RespType::String("dir".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res[0].eq("*2\r\n$3\r\ndir\r\n$12\r\ntest_rdb_dir\r\n"));
+        let cmds = vec![
+            RespType::String("CONFIG".to_string()),
+            RespType::String("GET".to_string()),
+            RespType::String("dbfilename".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res[0].eq("*2\r\n$10\r\ndbfilename\r\n$13\r\ntest_rdb_file\r\n"));
     }
 
     #[test]
