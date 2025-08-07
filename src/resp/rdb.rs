@@ -130,6 +130,8 @@ impl Rdb {
 
             let value_length = rdb_data[current_pos] as usize;
             println!("Value length: {}", value_length);
+            current_pos += 1;
+
             let mut value_bytes = vec![];
             for _ in 0..value_length {
              value_bytes.push(rdb_data[current_pos]);
