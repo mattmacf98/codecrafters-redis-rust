@@ -6,7 +6,8 @@ pub struct Instance {
     replica_of: Option<String>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
     write_commands: Arc<Mutex<Vec<String>>>,
-    replica_streams: Arc<Mutex<Vec<TcpStream>>>
+    replica_streams: Arc<Mutex<Vec<TcpStream>>>,
+    ack_replicas: Arc<Mutex<usize>>
 }
 
 impl Instance {
@@ -16,6 +17,7 @@ impl Instance {
              replica_of: replica_of,
              replica_streams: Arc::new(Mutex::new(vec![])),
              cache: Arc::new(Mutex::new(HashMap::new())),
+             ack_replicas: Arc::new(Mutex::new(0)),
              write_commands: Arc::new(Mutex::new(vec![]))
         }
     }    
@@ -33,7 +35,7 @@ impl Instance {
             match stream {
                 Ok(stream) => {
                     println!("accepted new connection");
-                    let mut client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.replica_of.clone());
+                    let mut client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.ack_replicas.clone(),  self.replica_of.clone());
                     thread::spawn(move || {
                         client.handle_connection(stream);
                     });
@@ -73,7 +75,7 @@ impl Instance {
         let psync_message = create_array_resp(vec![create_bulk_string_resp("PSYNC".into()), create_bulk_string_resp("?".into()), create_bulk_string_resp("-1".into())]);
         master_stream.write_all(psync_message.as_bytes()).unwrap();
 
-        let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.replica_of.clone());
+        let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.ack_replicas.clone(),  self.replica_of.clone());
         thread::spawn(move || {
             Self::handle_master_connection(master_stream, client);
         });

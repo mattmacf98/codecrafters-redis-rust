@@ -27,6 +27,5 @@ impl RedisCommand for ReplConfCommand {
         };
         assert!(star.to_lowercase().eq("*"));
         return vec!["SEND_REPLCONF_ACK".into()];
-        
     }
 }

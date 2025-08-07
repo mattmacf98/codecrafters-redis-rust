@@ -1,5 +1,5 @@
 use core::num;
-use std::{collections::HashMap, fmt::format, io::{Read, Write}, net::TcpStream, slice::Iter, str::FromStr, sync::{Arc, Mutex}};
+use std::{collections::HashMap, fmt::format, io::{Read, Write}, net::TcpStream, slice::Iter, str::FromStr, sync::{Arc, Mutex}, thread};
 
 use bytes::BytesMut;
 use tokio::stream;
@@ -44,13 +44,14 @@ pub struct Client {
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
     write_commands: Arc<Mutex<Vec<String>>>,
     replica_streams: Arc<Mutex<Vec<TcpStream>>>,
+    ack_replicas: Arc<Mutex<usize>>,
     is_replica_connection: bool,
     staged_commands: Vec<RespType>,
     staging_commands: bool
 }
 
 impl Client {
-    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, write_commands: Arc<Mutex<Vec<String>>>, replica_streams: Arc<Mutex<Vec<TcpStream>>>, replica_of: Option<String>) -> Self {
+    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, write_commands: Arc<Mutex<Vec<String>>>, replica_streams: Arc<Mutex<Vec<TcpStream>>>, ack_replicas: Arc<Mutex<usize>>, replica_of: Option<String>) -> Self {
 
         let mut master_repl_id = None;
         let mut master_repl_offset = None;
@@ -70,17 +71,27 @@ impl Client {
             master_repl_id: master_repl_id,
             staging_commands: false,
             cache: cache,
-            replica_streams: replica_streams
+            replica_streams: replica_streams,
+            ack_replicas: ack_replicas
         }
     }
 
     pub fn handle_connection(&mut self, mut stream: TcpStream) {
+        let mut added_to_replica_stream = false;
         loop {
             println!("LOOP");
-            if self.is_replica_connection {
+            if self.is_replica_connection && !added_to_replica_stream {
+                added_to_replica_stream = true;
                 println!("REPLICATING....");
                 let mut replica_stream_gaurd = self.replica_streams.lock().unwrap();
                 replica_stream_gaurd.push(stream.try_clone().unwrap());
+
+                // if there are no commands, jsut add to the acked
+                let write_commands_gaurd = self.write_commands.lock().unwrap();
+                if write_commands_gaurd.len() == 0 {
+                    let mut ack_replica_gaurd = self.ack_replicas.lock().unwrap();
+                    *ack_replica_gaurd += 1;
+                }
             }
 
             let mut buf = [0; 512];
@@ -110,13 +121,30 @@ impl Client {
             let mut write_commands_gaurd = self.write_commands.lock().unwrap();
             let mut replica_stream_gaurd = self.replica_streams.lock().unwrap();
             println!("COMMANDS LEN {} REPLICAS {}", write_commands_gaurd.len(), replica_stream_gaurd.len());
+            if write_commands_gaurd.len() == 0 {
+                continue;
+            }
+
+            let mut ack_replica_gaurd = self.ack_replicas.lock().unwrap();
+            *ack_replica_gaurd = 0;
+            println!("RESET ACKS TO 0");
             for stream in replica_stream_gaurd.iter_mut() {
                 for command in write_commands_gaurd.iter() {
                     stream.write_all(command.as_bytes()).unwrap();
                 }
+
+                let stream_clone = stream.try_clone().unwrap();
+                thread::spawn(move || {
+                    Self::send_get_ack_request(stream_clone);
+                });
             }
             write_commands_gaurd.clear();
         }
+    }
+
+    fn send_get_ack_request(mut stream: TcpStream) {
+        thread::sleep(std::time::Duration::from_millis(100));
+        stream.write_all(create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("GETACK".into()), create_bulk_string_resp("*".into())]).as_bytes()).unwrap();
     }
 
     pub fn handle_command(&mut self, cmd: RespType) -> Vec<String> {
@@ -147,16 +175,62 @@ impl Client {
                             return redis_command.execute(&mut iter);
                         },
                         "replconf" => {
-                            let redis_command = ReplConfCommand::new();
-                            return redis_command.execute(&mut iter);
+                            let keyword = match iter.next().expect("Should have a keyword key") {
+                                RespType::String(keyword) => keyword,
+                                _ => panic!("REPLCONF command expects a keyword")
+                            };
+                            if keyword.to_lowercase().eq("listening-port") || keyword.to_lowercase().eq("capa") {
+                                return vec![create_simple_string_resp("OK".to_string())]
+                            }
+
+                            if keyword.to_lowercase().eq("ack") {
+                                let mut ack_replica_gaurd = self.ack_replicas.lock().unwrap();
+                                *ack_replica_gaurd += 1;
+                                println!("INCREMENTING ACKS NOW AT {}", ack_replica_gaurd);
+                                return vec![];
+                            }
+                    
+                            println!("{}", keyword);
+                            assert!(keyword.to_lowercase().eq("getack"));
+                            let star = match iter.next().expect("Should have * key") {
+                                RespType::String(star) => star,
+                                _ => panic!("REPLCONF command expects a *")
+                            };
+                            assert!(star.to_lowercase().eq("*"));
+                            return vec!["SEND_REPLCONF_ACK".into()];
                         }
                         "multi" => {
                             self.staging_commands = true;
                             return vec![create_simple_string_resp("OK".into())];
                         },
                         "wait" => {
-                            let replica_stream_gaurd = self.replica_streams.lock().unwrap();
-                            return vec![create_int_resp(replica_stream_gaurd.len())];
+                            let num_replicas: usize = match Self::extract_num(&mut iter) {
+                                Some(val) => val,
+                                None => panic!("WAIT could not parse num replicas int"),
+                            };
+                            let timeout_ms: u128 = match Self::extract_num(&mut iter) {
+                                Some(val) => val,
+                                None => panic!("LRANGE could not parse end timeout"),
+                            };
+
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis();
+                            let expiration = now + timeout_ms;
+
+                            loop {
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis();
+                                let ack_replica_gaurd = self.ack_replicas.lock().unwrap();
+
+                                if now > expiration || *ack_replica_gaurd >= num_replicas {
+                                    println!("SENDING WAIT {}",ack_replica_gaurd);
+                                    return vec![create_int_resp(ack_replica_gaurd)];
+                                }
+                            }
                         }
                         "discard" => {
                             if self.staging_commands {
@@ -455,7 +529,8 @@ mod tests {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         let write_commands = Arc::new(Mutex::new(vec![]));
         let replica_streams = Arc::new(Mutex::new(vec![]));
-        let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), None);
+        let ack_replicas = Arc::new(Mutex::new(0));
+        let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), ack_replicas.clone(),None);
         (client, cache, write_commands, replica_streams)
     }
 
