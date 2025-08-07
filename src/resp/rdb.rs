@@ -7,7 +7,13 @@ use crate::redis::client::{CacheVal, StringCacheVal};
 pub struct Rdb {
     version: String,
     metadata: String,
-    key_values: HashMap<String, String>,
+    key_values: Vec<KeyValue>,
+}
+
+pub struct KeyValue {
+    key: String,
+    value: String,
+    expiry_time: Option<u128>,
 }
 
 impl Rdb {
@@ -20,8 +26,8 @@ impl Rdb {
 
     pub fn apply_to_db(&self, cache: Arc<Mutex<HashMap<String, CacheVal>>>) {
         let mut cache = cache.lock().unwrap();
-        for (key, value) in self.key_values.iter() {
-            cache.insert(key.to_string(), CacheVal::String(StringCacheVal { val: value.to_string(), expiry_time: None }));
+        for key_value in self.key_values.iter() {
+            cache.insert(key_value.key.clone(), CacheVal::String(StringCacheVal { val: key_value.value.clone(), expiry_time: key_value.expiry_time.clone() }));
         }
     }
 
@@ -72,7 +78,7 @@ impl Rdb {
         return (metadata_str.to_string(), current_pos);
     }
 
-    fn extract_key_values(rdb_data: &BytesMut, pos: usize) -> (HashMap<String, String>, usize) {
+    fn extract_key_values(rdb_data: &BytesMut, pos: usize) -> (Vec<KeyValue>, usize) {
         let mut current_pos = pos;
         let db_index = rdb_data[current_pos] as usize;
         println!("DB index: {}", db_index);
@@ -80,7 +86,7 @@ impl Rdb {
 
         if rdb_data[current_pos] == 0xFF {
             println!("No keys");
-            return (HashMap::new(), current_pos);
+            return (Vec::new(), current_pos);
         }
 
         assert_eq!(rdb_data[current_pos], 0xFB);
@@ -95,16 +101,25 @@ impl Rdb {
         current_pos += 1;
 
 
-        let mut key_values = HashMap::new();
+        let mut key_values = Vec::new();
         for _ in 0..total_keys {
+            let mut key_expiry_time = None;
             match rdb_data[current_pos] {
                 0xFD => {
                     // OxFD is the timestamp in seconds, eat 4 bytes
-                    current_pos += 4;
+                    let seconds_bytes = &rdb_data[current_pos+1..current_pos+5];
+                    let seconds = u32::from_le_bytes(seconds_bytes.try_into().unwrap()) as u128;
+                    key_expiry_time = Some(seconds);
+                    println!("Key expiry time: {}", seconds);
+                    current_pos += 5;
                 },
                 0xFC => {
                     // OxFC is the timestamp in milliseconds, eat 8 bytes
-                    current_pos += 8;
+                    let milliseconds_bytes = &rdb_data[current_pos+1..current_pos+9];
+                    let milliseconds = u64::from_le_bytes(milliseconds_bytes.try_into().unwrap()) as u128;
+                    key_expiry_time = Some(milliseconds);
+                    println!("Key expiry time: {}", milliseconds);
+                    current_pos += 9;
                 },
                 _ => {
                     // do nothing
@@ -139,7 +154,7 @@ impl Rdb {
             }
             let value_str = String::from_utf8_lossy(&value_bytes);
             println!("Value: {}", value_str);
-            key_values.insert(key_str.to_string(), value_str.to_string());
+            key_values.push(KeyValue { key: key_str.to_string(), value: value_str.to_string(), expiry_time: key_expiry_time });
         }
 
         return (key_values, current_pos);
