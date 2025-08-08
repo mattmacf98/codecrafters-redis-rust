@@ -1,5 +1,5 @@
 use core::num;
-use std::{collections::HashMap, fmt::format, io::{Read, Write}, net::TcpStream, slice::Iter, str::FromStr, sync::{Arc, Mutex}, thread};
+use std::{collections::{HashMap, HashSet}, fmt::format, io::{Read, Write}, net::TcpStream, slice::Iter, str::FromStr, sync::{Arc, Mutex}, thread};
 
 use bytes::BytesMut;
 use tokio::stream;
@@ -45,7 +45,7 @@ pub struct Client {
     write_commands: Arc<Mutex<Vec<String>>>,
     replica_streams: Arc<Mutex<Vec<TcpStream>>>,
     ack_replicas: Arc<Mutex<usize>>,
-    subscribed_channels: Vec<String>,
+    subscribed_channels: HashSet<String>,
     is_replica_connection: bool,
     staged_commands: Vec<RespType>,
     staging_commands: bool,
@@ -68,7 +68,7 @@ impl Client {
         Client {
             id: uuid::Uuid::new_v4().to_string(),
             replica_of: replica_of,
-            subscribed_channels: vec![],
+            subscribed_channels: HashSet::new(),
             is_replica_connection: false,
             staged_commands: vec![],
             write_commands: write_commands,
@@ -164,6 +164,18 @@ impl Client {
                 if let RespType::String(s) = iter.next().unwrap() {
                     let command = s.to_lowercase();
 
+                    // SUBSCRIBE STATE
+                    if self.subscribed_channels.len() > 0 {
+                        match command.as_str() {
+                            "subscribe" | "unsubscribe" | "psubscribe" | "punsubscribe" | "ping" | "quit" => {},
+                            c => {
+                                return vec![create_basic_err_resp(format!("ERR Can't execute '{}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context", c))];
+                            }
+                        }
+                    }
+
+
+                    // MULTI EXEC STATE
                     if self.staging_commands && command.ne("exec") && command.ne("discard") {
                         // only stage commands here
                         let cmd_clone = RespType::Array(resp_types.clone());
@@ -185,7 +197,7 @@ impl Client {
                                 RespType::String(channel) => channel,
                                 _ => panic!("SUBSCRIBE command expects a channel")
                             };
-                            self.subscribed_channels.push(channel.to_string());
+                            self.subscribed_channels.insert(channel.to_string());
                             return vec![create_array_resp(vec![create_bulk_string_resp("subscribe".into()), create_bulk_string_resp(channel.to_string().into()), create_int_resp(self.subscribed_channels.len())])];
                         },
                         "config" => {
@@ -585,6 +597,35 @@ mod tests {
         let res = client.handle_command(cmd);
         assert!(res[0].eq("*3\r\n$9\r\nsubscribe\r\n$8\r\nchannel1\r\n:1\r\n"));
         assert!(client.subscribed_channels.contains(&"channel1".to_string()));
+
+        let cmds = vec![
+            RespType::String("SUBSCRIBE".to_string()),
+            RespType::String("channel2".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res[0].eq("*3\r\n$9\r\nsubscribe\r\n$8\r\nchannel2\r\n:2\r\n"));
+        assert!(client.subscribed_channels.contains(&"channel1".to_string()));
+
+        let cmds = vec![
+            RespType::String("SUBSCRIBE".to_string()),
+            RespType::String("channel2".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res[0].eq("*3\r\n$9\r\nsubscribe\r\n$8\r\nchannel2\r\n:2\r\n"));
+        assert!(client.subscribed_channels.contains(&"channel1".to_string()));
+
+        let cmds = vec![
+            RespType::String("SET".to_string()),
+            RespType::String("key1".to_string()),
+            RespType::String("value1".to_string())
+        ];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        println!("RES: {}", res[0]);
+        assert!(res[0].eq("-ERR Can't execute 'set': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n"));
+        
     }
 
     #[test]
