@@ -1,7 +1,6 @@
 use std::fmt::Display;
 
 pub mod client;
-pub mod instance;
 
 pub fn create_simple_string_resp(str: String) -> String {
     return format!("+{}\r\n", str);

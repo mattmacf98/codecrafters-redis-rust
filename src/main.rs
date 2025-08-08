@@ -2,11 +2,12 @@
 use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread};
 use clap::Parser;
 
-use crate::{redis::{client::{self, CacheVal, Client, StringCacheVal}, create_array_resp, create_bulk_string_resp, create_simple_string_resp, instance::{self, Instance}}, resp::types::RespType};
+use crate::{instance::{master::MasterInstance, replica::ReplicaInstance, Instance}, redis::{client::{self, CacheVal, Client, StringCacheVal}, create_array_resp, create_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub mod resp;
 pub mod redis;
 pub mod commands;
+pub mod instance;
 
 #[derive(Parser)]
 #[command(name = "codecrafters-redis")]
@@ -29,6 +30,11 @@ struct Args {
 fn main() {
     // Parse command line arguments
     let args = Args::parse();
-    let instance = Instance::new(args.dir.clone(), args.dbfilename.clone(),args.replicaof.clone());
-    instance.start(args.port.to_string());
+    if args.replicaof.is_some() {
+        let instance = ReplicaInstance::new(args.port.to_string(), args.dir.clone(), args.dbfilename.clone(), args.replicaof.clone());
+        instance.start();
+    } else {
+        let instance = MasterInstance::new(args.port.to_string(), args.dir.clone(), args.dbfilename.clone());
+        instance.start();
+    }
 }

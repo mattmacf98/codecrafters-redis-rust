@@ -2,22 +2,21 @@ use std::{collections::HashMap, io::{Read, Write}, net::{TcpListener, TcpStream}
 
 use bytes::BytesMut;
 
-use crate::{redis::{client::{self, CacheVal, Client}, create_array_resp, create_bulk_string_resp}, resp::{rdb::Rdb, types::RespType}};
-pub struct Instance {
-    is_master: bool,
+use crate::{instance::Instance, redis::{client::{CacheVal, Client}, create_array_resp, create_bulk_string_resp}, resp::{rdb::Rdb, types::RespType}};
+
+pub struct ReplicaInstance {
+    port: String,
     rdb_dir: String,
     rdb_file: String,
     replica_of: Option<String>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
     channel_to_subscribers: Arc<Mutex<HashMap<String, Vec<String>>>>,
     client_to_stream: Arc<Mutex<HashMap<String, TcpStream>>>,
-    write_commands: Arc<Mutex<Vec<String>>>,
-    replica_streams: Arc<Mutex<Vec<TcpStream>>>,
-    ack_replicas: Arc<Mutex<usize>>
+    write_commands: Arc<Mutex<Vec<String>>>
 }
 
-impl Instance {
-    pub fn new(rdb_dir: String, rdb_file: String, replica_of: Option<String>) -> Self {
+impl ReplicaInstance {
+    pub fn new(port: String, rdb_dir: String, rdb_file: String, replica_of: Option<String>) -> Self {
         let cache = Arc::new(Mutex::new(HashMap::new()));
         let rdb_data = std::fs::read(format!("{}/{}", rdb_dir, rdb_file));
         match rdb_data {
@@ -28,46 +27,11 @@ impl Instance {
             Err(e) => println!("Error reading RDB file: {} treat as empty", e)
         }
 
-        Instance {
-             is_master: replica_of.is_none(),
-             replica_of: replica_of,
-             rdb_dir: rdb_dir,
-             rdb_file: rdb_file,
-             channel_to_subscribers: Arc::new(Mutex::new(HashMap::new())),
-             client_to_stream: Arc::new(Mutex::new(HashMap::new())),
-             replica_streams: Arc::new(Mutex::new(vec![])),
-             cache: cache,
-             ack_replicas: Arc::new(Mutex::new(0)),
-             write_commands: Arc::new(Mutex::new(vec![]))
-        }
-    }    
-
-    pub fn start(&self, port: String) {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).unwrap();
-        println!("Logs from your program will appear here!");
-        println!("Starting Redis server on port {}", port);
-
-        if !self.is_master {
-            self.handle_replica_handshake(port);
-        }
-
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => {
-                    println!("accepted new connection");
-                    let mut client = Client::new(
-                        self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), 
-                        self.ack_replicas.clone(),  self.replica_of.clone(), self.channel_to_subscribers.clone(), self.client_to_stream.clone(), self.rdb_dir.clone(), self.rdb_file.clone()
-                    );
-                    self.client_to_stream.lock().unwrap().insert(client.id.clone(), stream.try_clone().unwrap());
-                    thread::spawn(move || {
-                        client.handle_connection(stream);
-                    });
-                }
-                Err(e) => {
-                    println!("error: {}", e);
-                }
-            }
+        ReplicaInstance { 
+            port, rdb_dir, rdb_file, replica_of, cache,  
+            channel_to_subscribers: Arc::new(Mutex::new(HashMap::new())), 
+            client_to_stream: Arc::new(Mutex::new(HashMap::new())), 
+            write_commands: Arc::new(Mutex::new(vec![])) 
         }
     }
 
@@ -99,8 +63,9 @@ impl Instance {
         let psync_message = create_array_resp(vec![create_bulk_string_resp("PSYNC".into()), create_bulk_string_resp("?".into()), create_bulk_string_resp("-1".into())]);
         master_stream.write_all(psync_message.as_bytes()).unwrap();
 
-        let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.ack_replicas.clone(),
-          self.replica_of.clone(), self.channel_to_subscribers.clone(), self.client_to_stream.clone(), self.rdb_dir.clone(), self.rdb_file.clone());
+        let client = Client::new(self.cache.clone(), self.write_commands.clone(), Arc::new(Mutex::new(vec![])), 
+        Arc::new(Mutex::new(0)), self.replica_of.clone(), self.channel_to_subscribers.clone(), 
+        self.client_to_stream.clone(), self.rdb_dir.clone(), self.rdb_file.clone());
         thread::spawn(move || {
             Self::handle_master_connection(master_stream, client);
         });
@@ -144,6 +109,36 @@ impl Instance {
                     },
                 };
                 println!("{} CONSUMED OUT OF {}", cur, buffer.len());
+            }
+        }
+    }
+}
+
+impl Instance for ReplicaInstance {
+    fn start(&self) {
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port)).unwrap();
+        println!("Logs from your program will appear here!");
+        println!("Starting Redis server on port {}", self.port);
+
+        self.handle_replica_handshake(self.port.clone());
+
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    println!("accepted new connection");
+                    let mut client = Client::new(
+                        self.cache.clone(), self.write_commands.clone(), Arc::new(Mutex::new(vec![])), 
+                        Arc::new(Mutex::new(0)),  self.replica_of.clone(), self.channel_to_subscribers.clone(), 
+                        self.client_to_stream.clone(), self.rdb_dir.clone(), self.rdb_file.clone()
+                    );
+                    self.client_to_stream.lock().unwrap().insert(client.id.clone(), stream.try_clone().unwrap());
+                    thread::spawn(move || {
+                        client.handle_connection(stream);
+                    });
+                }
+                Err(e) => {
+                    println!("error: {}", e);
+                }
             }
         }
     }
