@@ -9,6 +9,7 @@ pub struct Instance {
     rdb_file: String,
     replica_of: Option<String>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
+    channel_to_subscribers: Arc<Mutex<HashMap<String, Vec<String>>>>,
     write_commands: Arc<Mutex<Vec<String>>>,
     replica_streams: Arc<Mutex<Vec<TcpStream>>>,
     ack_replicas: Arc<Mutex<usize>>
@@ -31,6 +32,7 @@ impl Instance {
              replica_of: replica_of,
              rdb_dir: rdb_dir,
              rdb_file: rdb_file,
+             channel_to_subscribers: Arc::new(Mutex::new(HashMap::new())),
              replica_streams: Arc::new(Mutex::new(vec![])),
              cache: cache,
              ack_replicas: Arc::new(Mutex::new(0)),
@@ -53,7 +55,7 @@ impl Instance {
                     println!("accepted new connection");
                     let mut client = Client::new(
                         self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), 
-                        self.ack_replicas.clone(),  self.replica_of.clone(), self.rdb_dir.clone(), self.rdb_file.clone()
+                        self.ack_replicas.clone(),  self.replica_of.clone(), self.channel_to_subscribers.clone(), self.rdb_dir.clone(), self.rdb_file.clone()
                     );
                     thread::spawn(move || {
                         client.handle_connection(stream);
@@ -95,7 +97,7 @@ impl Instance {
         master_stream.write_all(psync_message.as_bytes()).unwrap();
 
         let client = Client::new(self.cache.clone(), self.write_commands.clone(), self.replica_streams.clone(), self.ack_replicas.clone(),
-          self.replica_of.clone(), self.rdb_dir.clone(), self.rdb_file.clone());
+          self.replica_of.clone(), self.channel_to_subscribers.clone(), self.rdb_dir.clone(), self.rdb_file.clone());
         thread::spawn(move || {
             Self::handle_master_connection(master_stream, client);
         });
