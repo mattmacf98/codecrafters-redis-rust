@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet}, fmt::format, io::{Read, Write}, net::
 
 use bytes::BytesMut;
 
-use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::{self, GetCommand}, incr::IncrCommand, info::InfoCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, psync::PsyncCommand, replconf::ReplConfCommand, rpush::RpushCommand, set::SetCommand, type_command::TypeCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::{rdb::Rdb, types::RespType}};
+use crate::{commands::{blpop::BlpopCommand, echo::EchoCommand, get::{self, GetCommand}, incr::IncrCommand, info::InfoCommand, keys::KeysCommand, llen::LlenCommand, lpop::LpopCommand, lpush::LpushCommand, lrange::LrangeCommand, ping::PingCommand, psync::PsyncCommand, publish::PublishCommand, replconf::ReplConfCommand, rpush::RpushCommand, set::SetCommand, subscribe::SubscribeCommand, type_command::TypeCommand, unsubscribe::UnsubscribeCommand, wait::WaitCommand, xadd::XaddCommand, xrange::XrangeCommand, xread::XreadCommand, RedisCommand}, redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::{rdb::Rdb, types::RespType}};
 
 pub enum CacheVal {
     String(StringCacheVal),
@@ -188,12 +188,12 @@ impl Client {
 
                     match command.as_str() {
                         "keys" => {
-                            // for now always assume the pattern is *
-                            let mut keys = vec![];
-                            for (key, _) in self.cache.lock().unwrap().iter() {
-                                keys.push(key.clone());
-                            }
-                            return vec![create_array_resp(keys.into_iter().map(|x| create_bulk_string_resp(x)).collect())];
+                            let pattern = match iter.next().expect("Should have pattern") {
+                                RespType::String(pattern) => pattern,
+                                _ => panic!("KEYS command expects a pattern")
+                            };
+                            let redis_command = KeysCommand::new(pattern.to_string(), self.cache.clone());
+                            return redis_command.execute(&mut iter);
                         },
                         "publish" => {
                             let channel = match iter.next().expect("Should have channel") {
@@ -204,25 +204,8 @@ impl Client {
                                 RespType::String(message) => message,
                                 _ => panic!("PUBLISH command expects a message")
                             };
-                            let channel_to_subscribers_gaurd = self.channel_to_subscribers.lock().unwrap();
-                            match channel_to_subscribers_gaurd.get(channel.as_str()) {
-                                Some(subs) => {
-                                    for sub in subs.iter() {
-                                        match self.client_to_stream.lock().unwrap().get(sub) {
-                                            Some(mut stream) => {
-                                                stream.write_all(create_array_resp(vec![create_bulk_string_resp("message".into()), create_bulk_string_resp(channel.clone().into()), create_bulk_string_resp(message.clone().into())]).as_bytes()).unwrap();
-                                            },
-                                            _ => {
-                                                println!("SUB {} NOT FOUND", sub);
-                                            }
-                                        }
-                                    }
-                                    return vec![create_int_resp(subs.len() as i64)];
-                                },
-                                _ => {
-                                    return vec![create_int_resp(0)];
-                                }
-                            }
+                            let redis_command = PublishCommand::new(channel.to_string(), message.to_string(), self.channel_to_subscribers.clone(), self.client_to_stream.clone());
+                            return redis_command.execute(&mut iter);
                         },
                         "unsubscribe" => {
                             let channel = match iter.next().expect("Should have channel") {
@@ -230,14 +213,8 @@ impl Client {
                                 _ => panic!("UNSUBSCRIBE command expects a channel")
                             };
                             self.subscribed_channels.remove(channel.as_str());
-                            let mut channel_to_subscribers_gaurd = self.channel_to_subscribers.lock().unwrap();
-                            match channel_to_subscribers_gaurd.get_mut(channel.as_str()) {
-                                Some(subs) => {
-                                    subs.retain(|x| x != &self.id);
-                                },
-                                _ => {}
-                            }
-                            return vec![create_array_resp(vec![create_bulk_string_resp("unsubscribe".into()), create_bulk_string_resp(channel.to_string().into()), create_int_resp(self.subscribed_channels.len())])];
+                            let redis_command = UnsubscribeCommand::new(self.id.clone(), channel.to_string(), self.channel_to_subscribers.clone(), self.subscribed_channels.len() as i64);
+                            return redis_command.execute(&mut iter);
                         }
                         "subscribe" => {
                             let channel = match iter.next().expect("Should have channel") {
@@ -245,16 +222,8 @@ impl Client {
                                 _ => panic!("SUBSCRIBE command expects a channel")
                             };
                             self.subscribed_channels.insert(channel.to_string());
-                            let mut channel_to_subscribers_gaurd = self.channel_to_subscribers.lock().unwrap();
-                            match channel_to_subscribers_gaurd.get_mut(channel.as_str()) {
-                                Some(subs) => {
-                                    subs.push(self.id.clone());
-                                },
-                                _ => {
-                                    channel_to_subscribers_gaurd.insert(channel.to_string(), vec![self.id.clone()]);
-                                }
-                            }
-                            return vec![create_array_resp(vec![create_bulk_string_resp("subscribe".into()), create_bulk_string_resp(channel.to_string().into()), create_int_resp(self.subscribed_channels.len())])];
+                            let redis_command = SubscribeCommand::new(self.id.clone(), channel.to_string(), self.channel_to_subscribers.clone(), self.subscribed_channels.len() as i64);
+                            return redis_command.execute(&mut iter);
                         },
                         "config" => {
                             let _ = match iter.next().expect("Should have get key") {
@@ -298,7 +267,6 @@ impl Client {
                                 return vec![];
                             }
                     
-                            println!("{}", keyword);
                             assert!(keyword.to_lowercase().eq("getack"));
                             let star = match iter.next().expect("Should have * key") {
                                 RespType::String(star) => star,
@@ -321,24 +289,8 @@ impl Client {
                                 None => panic!("LRANGE could not parse end timeout"),
                             };
 
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis();
-                            let expiration = now + timeout_ms;
-
-                            loop {
-                                let now = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_millis();
-                                let ack_replica_gaurd = self.ack_replicas.lock().unwrap();
-
-                                if now > expiration || *ack_replica_gaurd >= num_replicas {
-                                    println!("SENDING WAIT {}",ack_replica_gaurd);
-                                    return vec![create_int_resp(ack_replica_gaurd)];
-                                }
-                            }
+                            let redis_command = WaitCommand::new(num_replicas, timeout_ms, self.ack_replicas.clone());
+                            return redis_command.execute(&mut iter);
                         }
                         "discard" => {
                             if self.staging_commands {

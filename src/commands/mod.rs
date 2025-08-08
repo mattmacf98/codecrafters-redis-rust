@@ -19,6 +19,11 @@ pub mod incr;
 pub mod info;
 pub mod replconf;
 pub mod psync;
+pub mod publish;
+pub mod keys;
+pub mod unsubscribe;
+pub mod subscribe;
+pub mod wait;
 
 pub trait RedisCommand {
     fn execute(&self, iter: &mut Iter<'_, RespType>) -> Vec<String>;
