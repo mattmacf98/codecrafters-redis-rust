@@ -37,17 +37,16 @@ pub struct StreamItem {
 }
 pub struct Client {
     pub(crate) id: String,
+    pub(crate) is_replica_connection: bool,
     replica_of: Option<String>,
     master_repl_id: Option<String>,
     master_repl_offset: Option<u128>,
     cache: Arc<Mutex<HashMap<String, CacheVal>>>,
     write_commands: Arc<Mutex<Vec<String>>>,
-    replica_streams: Arc<Mutex<Vec<TcpStream>>>,
     ack_replicas: Arc<Mutex<usize>>,
     subscribed_channels: HashSet<String>,
     channel_to_subscribers: Arc<Mutex<HashMap<String, Vec<String>>>>,
     client_to_stream: Arc<Mutex<HashMap<String, TcpStream>>>,
-    is_replica_connection: bool,
     staged_commands: Vec<RespType>,
     staging_commands: bool,
     rdb_dir: String,
@@ -55,7 +54,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, write_commands: Arc<Mutex<Vec<String>>>, replica_streams: Arc<Mutex<Vec<TcpStream>>>, 
+    pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, write_commands: Arc<Mutex<Vec<String>>>,
          ack_replicas: Arc<Mutex<usize>>, replica_of: Option<String>, channel_to_subscribers: Arc<Mutex<HashMap<String, Vec<String>>>>, client_to_stream: Arc<Mutex<HashMap<String, TcpStream>>>, rdb_dir: String, rdb_file: String) -> Self {
 
         let mut master_repl_id = None;
@@ -79,84 +78,10 @@ impl Client {
             master_repl_id: master_repl_id,
             staging_commands: false,
             cache: cache,
-            replica_streams: replica_streams,
             ack_replicas: ack_replicas,
             rdb_dir: rdb_dir,
             rdb_file: rdb_file
         }
-    }
-
-    pub fn handle_connection(&mut self, mut stream: TcpStream) {
-        let mut added_to_replica_stream = false;
-        loop {
-            println!("LOOP");
-            if self.is_replica_connection && !added_to_replica_stream {
-                added_to_replica_stream = true;
-                println!("REPLICATING....");
-                let mut replica_stream_gaurd = self.replica_streams.lock().unwrap();
-                replica_stream_gaurd.push(stream.try_clone().unwrap());
-
-                // if there are no commands, jsut add to the acked
-                let write_commands_gaurd = self.write_commands.lock().unwrap();
-                if write_commands_gaurd.len() == 0 {
-                    let mut ack_replica_gaurd = self.ack_replicas.lock().unwrap();
-                    *ack_replica_gaurd += 1;
-                }
-            }
-
-            let mut buf = [0; 512];
-            let read_count = stream.read(&mut buf).unwrap();
-            if read_count == 0 {
-                break;
-            }
-            let buffer = bytes::BytesMut::from(&buf[..read_count]);
-            println!("received: {}", String::from_utf8_lossy(&buffer));
-            let resp_res = RespType::parse(&buffer, 0);
-            match resp_res {
-                Ok(res) => {
-                    let commands = self.handle_command(res.0);
-                    for command in commands {
-                        if command.eq("EMPTY_RDB") {
-                            let file = include_bytes!("../../empty.rdb");
-                            stream.write_all(format!("${}\r\n", file.len()).as_bytes()).unwrap();
-                            stream.write_all(file).unwrap();
-                        } else {
-                            stream.write_all(command.as_bytes()).unwrap();
-                        }
-                    }
-                },
-                Err(e) => panic!("ERROR {:?}", e),
-            };
-
-            let mut write_commands_gaurd = self.write_commands.lock().unwrap();
-            let mut replica_stream_gaurd = self.replica_streams.lock().unwrap();
-            println!("COMMANDS LEN {} REPLICAS {}", write_commands_gaurd.len(), replica_stream_gaurd.len());
-            if write_commands_gaurd.len() == 0 {
-                continue;
-            }
-
-            let mut ack_replica_gaurd = self.ack_replicas.lock().unwrap();
-            *ack_replica_gaurd = 0;
-            println!("RESET ACKS TO 0");
-            for stream in replica_stream_gaurd.iter_mut() {
-                for command in write_commands_gaurd.iter() {
-                    stream.write_all(command.as_bytes()).unwrap();
-                }
-
-                let stream_clone = stream.try_clone().unwrap();
-                thread::spawn(move || {
-                    Self::send_get_ack_request(stream_clone);
-                });
-            }
-            write_commands_gaurd.clear();
-        }
-    }
-
-    fn send_get_ack_request(mut stream: TcpStream) {
-        // what is the redis actual spec about sending GET ACK? some tests expect it to send GETACK immediately after any write is sent to the master node, 
-        // while others got upset and wanted to receieve all sets (coming from multiple requests) to be propagated to the slave before the GETACK is sent.
-        thread::sleep(std::time::Duration::from_millis(100));
-        stream.write_all(create_array_resp(vec![create_bulk_string_resp("REPLCONF".into()), create_bulk_string_resp("GETACK".into()), create_bulk_string_resp("*".into())]).as_bytes()).unwrap();
     }
 
     pub fn handle_command(&mut self, cmd: RespType) -> Vec<String> {
@@ -176,7 +101,6 @@ impl Client {
                             }
                         }
                     }
-
 
                     // MULTI EXEC STATE
                     if self.staging_commands && command.ne("exec") && command.ne("discard") {
@@ -559,7 +483,7 @@ impl Client {
                         _ => panic!("UNEXPECTED COMMAND")
                     }
                 } else {
-                    panic!("UNEXPECTED ARRAY ENTRY")
+                    panic!("UNEXPECTED ARRAY ENTRY EXPECTING ONLY STRINGS")
                 } 
             },
             _ => return vec![]
@@ -585,20 +509,19 @@ mod tests {
 
     use super::*;
 
-    fn instantiate_client() -> (Client, Arc<Mutex<HashMap<String, CacheVal>>>, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<TcpStream>>>, Arc<Mutex<HashMap<String, Vec<String>>>>) {
+    fn instantiate_client() -> (Client, Arc<Mutex<HashMap<String, CacheVal>>>, Arc<Mutex<Vec<String>>>, Arc<Mutex<HashMap<String, Vec<String>>>>) {
         let cache: Arc<Mutex<HashMap<String, CacheVal>>> = Arc::new(Mutex::new(HashMap::new()));
         let write_commands = Arc::new(Mutex::new(vec![]));
-        let replica_streams = Arc::new(Mutex::new(vec![]));
         let ack_replicas = Arc::new(Mutex::new(0));
         let channel_to_subscribers = Arc::new(Mutex::new(HashMap::new()));
         let client_to_stream = Arc::new(Mutex::new(HashMap::new()));
-        let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), ack_replicas.clone(),None, channel_to_subscribers.clone(), client_to_stream.clone(), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
-        (client, cache, write_commands, replica_streams, channel_to_subscribers)
+        let client = Client::new(cache.clone(), write_commands.clone(), ack_replicas.clone(),None, channel_to_subscribers.clone(), client_to_stream.clone(), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
+        (client, cache, write_commands, channel_to_subscribers)
     }
 
     #[test]
     fn test_publish_command() {
-        let (mut client, cache, write_commands, replica_streams, channel_to_subscribers) = instantiate_client();
+        let (mut client, cache, write_commands, channel_to_subscribers) = instantiate_client();
         let cmds = vec![
             RespType::String("PUBLISH".to_string()),
             RespType::String("channel1".to_string()),
@@ -617,7 +540,7 @@ mod tests {
         assert!(res[0].eq("*3\r\n$9\r\nsubscribe\r\n$8\r\nchannel1\r\n:1\r\n"));
 
 
-        let mut client_two = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), Arc::new(Mutex::new(0)).clone(),None, channel_to_subscribers.clone(), Arc::new(Mutex::new(HashMap::new())), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
+        let mut client_two = Client::new(cache.clone(), write_commands.clone(), Arc::new(Mutex::new(0)).clone(),None, channel_to_subscribers.clone(), Arc::new(Mutex::new(HashMap::new())), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
 
         let cmds = vec![
             RespType::String("PUBLISH".to_string()),
@@ -631,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_subscribe_command() {
-        let (mut client, _ ,_ , _ , _) = instantiate_client();
+        let (mut client, _ ,_ , _) = instantiate_client();
 
         let cmds = vec![
             RespType::String("SUBSCRIBE".to_string()),
@@ -674,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_keys_command() {
-        let (mut client,_ ,_ , _ , _) = instantiate_client();
+        let (mut client,_ ,_ , _) = instantiate_client();
         {
             let mut cache_guard = client.cache.lock().unwrap();
             cache_guard.insert("key1".to_string(), CacheVal::String(StringCacheVal { val: "value1".to_string(), expiry_time: None }));
@@ -692,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_config_command() {
-        let (mut client,_ ,_ , _ , _) = instantiate_client();
+        let (mut client,_ ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("CONFIG".to_string()),
             RespType::String("GET".to_string()),
@@ -713,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_transaction_command() {
-        let (mut client,_ ,_ , _ , _) = instantiate_client();
+        let (mut client,_ ,_ , _) = instantiate_client();
 
         let cmds = vec![
             RespType::String("MULTI".to_string())
@@ -750,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_incr_command() {
-        let (mut client,_ ,_ , _ , _) = instantiate_client();
+        let (mut client,_ ,_ , _) = instantiate_client();
 
         let cmds = vec![
             RespType::String("INCR".to_string()),
@@ -772,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_multi_stream_xread_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -799,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_xread_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -823,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_xrange_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -868,7 +791,7 @@ mod tests {
     }
     #[test]
     fn test_xadd_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -897,7 +820,7 @@ mod tests {
 
     #[test]
     fn test_xadd_command_partial() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -942,7 +865,7 @@ mod tests {
 
     #[test]
     fn test_xadd_command_full() {
-        let (mut client, _ ,_ , _ , _) = instantiate_client();
+        let (mut client, _ ,_ , _) = instantiate_client();
         
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -960,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_xadd_command_validation() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         
         let cmds = vec![
             RespType::String("XADD".to_string()),
@@ -1004,7 +927,7 @@ mod tests {
 
     #[test]
     fn test_type_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
 
         {
             let mut cache_guard = cache.lock().unwrap();
@@ -1048,7 +971,7 @@ mod tests {
 
     #[test]
     fn test_set_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         
         let cmds = vec![
             RespType::String("SET".to_string()),
@@ -1073,7 +996,7 @@ mod tests {
 
     #[test]
     fn test_set_with_expr_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("SET".to_string()),
             RespType::String("foo".to_string()),
@@ -1100,7 +1023,7 @@ mod tests {
 
     #[test]
     fn test_get_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("GET".to_string()),
             RespType::String("foo".to_string())
@@ -1117,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_get_expired_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("GET".to_string()),
             RespType::String("foo".to_string())
@@ -1134,7 +1057,7 @@ mod tests {
 
     #[test]
     fn test_get_non_expired_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("GET".to_string()),
             RespType::String("foo".to_string())
@@ -1156,7 +1079,7 @@ mod tests {
 
     #[test]
     fn test_null_get_command() {
-        let (mut client, _ ,_ , _ , _) = instantiate_client();
+        let (mut client, _ ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("GET".to_string()),
             RespType::String("foo".to_string())
@@ -1169,7 +1092,7 @@ mod tests {
 
     #[test]
     fn test_ping_command() {
-        let (mut client, _ ,_ , _ , _) = instantiate_client();
+        let (mut client, _ ,_ , _) = instantiate_client();
         let cmds = vec![RespType::String("PING".to_string())];
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
@@ -1178,7 +1101,7 @@ mod tests {
 
     #[test]
     fn test_ping_sub_mode_command() {
-        let (mut client, _ ,_ , _ , _) = instantiate_client();
+        let (mut client, _ ,_ , _) = instantiate_client();
         client.subscribed_channels.insert("channel1".to_string());
         let cmds = vec![RespType::String("PING".to_string())];
         let cmd = RespType::Array(cmds);
@@ -1188,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_echo_command() {
-        let (mut client, _ ,_ , _ , _) = instantiate_client();
+        let (mut client, _ ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("ECHO".to_string()),
             RespType::String("hello".to_string())
@@ -1201,7 +1124,7 @@ mod tests {
 
     #[test]
     fn test_llen_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("LLEN".to_string()),
             RespType::String("list_key".to_string())
@@ -1227,7 +1150,7 @@ mod tests {
 
     #[test]
     fn test_lpop_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("LPOP".to_string()),
             RespType::String("list_key".to_string())
@@ -1262,7 +1185,7 @@ mod tests {
 
     #[test]
     fn test_rpush_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("RPUSH".to_string()),
             RespType::String("list_key".to_string()),
@@ -1303,7 +1226,7 @@ mod tests {
 
     #[test]
     fn test_multi_rpush_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("RPUSH".to_string()),
             RespType::String("list_key".to_string()),
@@ -1328,7 +1251,7 @@ mod tests {
 
     #[test]
     fn test_multi_lpush_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("LPUSH".to_string()),
             RespType::String("list_key".to_string()),
@@ -1371,7 +1294,7 @@ mod tests {
 
     #[test]
     fn test_lrange_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("LRANGE".to_string()),
             RespType::String("list_key".to_string()),
@@ -1390,7 +1313,7 @@ mod tests {
 
     #[test]
     fn test_empty_lrange_command() {
-        let (mut client, _ ,_ , _ , _) = instantiate_client();
+        let (mut client, _ ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("LRANGE".to_string()),
             RespType::String("list_key".to_string()),
@@ -1405,7 +1328,7 @@ mod tests {
 
     #[test]
     fn test_negative_lrange_command() {
-        let (mut client, cache ,_ , _ , _) = instantiate_client();
+        let (mut client, cache ,_ , _) = instantiate_client();
         let cmds = vec![
             RespType::String("LRANGE".to_string()),
             RespType::String("list_key".to_string()),

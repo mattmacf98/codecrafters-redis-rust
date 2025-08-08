@@ -91,6 +91,28 @@ impl ReplicaInstance {
             }
         }
     }
+
+    fn handle_client_connection(mut stream: TcpStream, mut client: Client) {
+        loop {
+            let mut buf = [0; 512];
+            let read_count = stream.read(&mut buf).unwrap();
+            if read_count == 0 {
+                break;
+            }
+            let buffer = bytes::BytesMut::from(&buf[..read_count]);
+            println!("received: {}", String::from_utf8_lossy(&buffer));
+            let resp_res = RespType::parse(&buffer, 0);
+            match resp_res {
+                Ok(res) => {
+                    let commands = client.handle_command(res.0);
+                    for command in commands {
+                        stream.write_all(command.as_bytes()).unwrap();
+                    }
+                },
+                Err(e) => panic!("ERROR {:?}", e),
+            };
+        }
+    }
 }
 
 impl Instance for ReplicaInstance {
@@ -101,7 +123,7 @@ impl Instance for ReplicaInstance {
 
         // Create special stream with master
         let master_stream = self.handle_replica_handshake(self.port.clone());
-        let client = Client::new(self.cache.clone(), self.write_commands.clone(), Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(0)), self.replica_of.clone(), self.channel_to_subscribers.clone(), self.client_to_stream.clone(), self.rdb_dir.clone(), self.rdb_file.clone());
+        let client = Client::new(self.cache.clone(), self.write_commands.clone(), Arc::new(Mutex::new(0)), self.replica_of.clone(), self.channel_to_subscribers.clone(), self.client_to_stream.clone(), self.rdb_dir.clone(), self.rdb_file.clone());
         thread::spawn(move || {
             Self::handle_master_connection(master_stream, client);
         });
@@ -111,14 +133,14 @@ impl Instance for ReplicaInstance {
             match stream {
                 Ok(stream) => {
                     println!("accepted new connection");
-                    let mut client = Client::new(
-                        self.cache.clone(), self.write_commands.clone(), Arc::new(Mutex::new(vec![])), 
+                    let client = Client::new(
+                        self.cache.clone(), self.write_commands.clone(), 
                         Arc::new(Mutex::new(0)),  self.replica_of.clone(), self.channel_to_subscribers.clone(), 
                         self.client_to_stream.clone(), self.rdb_dir.clone(), self.rdb_file.clone()
                     );
                     self.client_to_stream.lock().unwrap().insert(client.id.clone(), stream.try_clone().unwrap());
                     thread::spawn(move || {
-                        client.handle_connection(stream);
+                        Self::handle_client_connection(stream, client);
                     });
                 }
                 Err(e) => {
