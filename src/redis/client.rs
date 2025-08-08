@@ -308,7 +308,7 @@ impl Client {
                             }
                         }
                         "ping" => {
-                            let redis_command = PingCommand::new();
+                            let redis_command = PingCommand::new(self.subscribed_channels.len() > 0);
                             return redis_command.execute(&mut iter);
                         },
                         "echo" => {
@@ -1130,6 +1130,16 @@ mod tests {
         let cmd = RespType::Array(cmds);
         let res = client.handle_command(cmd);
         assert!(res[0].eq("+PONG\r\n"));
+    }
+
+    #[test]
+    fn test_ping_sub_mode_command() {
+        let (mut client, _ ,_ , _) = instantiate_client();
+        client.subscribed_channels.insert("channel1".to_string());
+        let cmds = vec![RespType::String("PING".to_string())];
+        let cmd = RespType::Array(cmds);
+        let res = client.handle_command(cmd);
+        assert!(res[0].eq("*2\r\n$4\r\npong\r\n$0\r\n\r\n"));
     }
 
     #[test]
