@@ -36,7 +36,7 @@ pub struct StreamItem {
     pub(crate) key_vals: Vec<KeyVal>
 }
 pub struct Client {
-    id: String,
+    pub(crate) id: String,
     replica_of: Option<String>,
     master_repl_id: Option<String>,
     master_repl_offset: Option<u128>,
@@ -46,6 +46,7 @@ pub struct Client {
     ack_replicas: Arc<Mutex<usize>>,
     subscribed_channels: HashSet<String>,
     channel_to_subscribers: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    client_to_stream: Arc<Mutex<HashMap<String, TcpStream>>>,
     is_replica_connection: bool,
     staged_commands: Vec<RespType>,
     staging_commands: bool,
@@ -55,7 +56,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(cache: Arc<Mutex<HashMap<String, CacheVal>>>, write_commands: Arc<Mutex<Vec<String>>>, replica_streams: Arc<Mutex<Vec<TcpStream>>>, 
-         ack_replicas: Arc<Mutex<usize>>, replica_of: Option<String>, channel_to_subscribers: Arc<Mutex<HashMap<String, Vec<String>>>>, rdb_dir: String, rdb_file: String) -> Self {
+         ack_replicas: Arc<Mutex<usize>>, replica_of: Option<String>, channel_to_subscribers: Arc<Mutex<HashMap<String, Vec<String>>>>, client_to_stream: Arc<Mutex<HashMap<String, TcpStream>>>, rdb_dir: String, rdb_file: String) -> Self {
 
         let mut master_repl_id = None;
         let mut master_repl_offset = None;
@@ -68,6 +69,7 @@ impl Client {
         Client {
             id: uuid::Uuid::new_v4().to_string(),
             replica_of: replica_of,
+            client_to_stream: client_to_stream,
             subscribed_channels: HashSet::new(),
             channel_to_subscribers: channel_to_subscribers,
             is_replica_connection: false,
@@ -205,6 +207,16 @@ impl Client {
                             let channel_to_subscribers_gaurd = self.channel_to_subscribers.lock().unwrap();
                             match channel_to_subscribers_gaurd.get(channel.as_str()) {
                                 Some(subs) => {
+                                    for sub in subs.iter() {
+                                        match self.client_to_stream.lock().unwrap().get(sub) {
+                                            Some(mut stream) => {
+                                                stream.write_all(create_array_resp(vec![create_bulk_string_resp("message".into()), create_bulk_string_resp(channel.clone().into()), create_bulk_string_resp(message.clone().into())]).as_bytes()).unwrap();
+                                            },
+                                            _ => {
+                                                println!("SUB {} NOT FOUND", sub);
+                                            }
+                                        }
+                                    }
                                     return vec![create_int_resp(subs.len() as i64)];
                                 },
                                 _ => {
@@ -612,7 +624,8 @@ mod tests {
         let replica_streams = Arc::new(Mutex::new(vec![]));
         let ack_replicas = Arc::new(Mutex::new(0));
         let channel_to_subscribers = Arc::new(Mutex::new(HashMap::new()));
-        let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), ack_replicas.clone(),None, channel_to_subscribers.clone(), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
+        let client_to_stream = Arc::new(Mutex::new(HashMap::new()));
+        let client = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), ack_replicas.clone(),None, channel_to_subscribers.clone(), client_to_stream.clone(), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
         (client, cache, write_commands, replica_streams, channel_to_subscribers)
     }
 
@@ -637,7 +650,7 @@ mod tests {
         assert!(res[0].eq("*3\r\n$9\r\nsubscribe\r\n$8\r\nchannel1\r\n:1\r\n"));
 
 
-        let mut client_two = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), Arc::new(Mutex::new(0)).clone(),None, channel_to_subscribers.clone(), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
+        let mut client_two = Client::new(cache.clone(), write_commands.clone(), replica_streams.clone(), Arc::new(Mutex::new(0)).clone(),None, channel_to_subscribers.clone(), Arc::new(Mutex::new(HashMap::new())), "test_rdb_dir".to_string(), "test_rdb_file".to_string());
 
         let cmds = vec![
             RespType::String("PUBLISH".to_string()),
