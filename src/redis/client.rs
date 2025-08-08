@@ -224,6 +224,21 @@ impl Client {
                                 }
                             }
                         },
+                        "unsubscribe" => {
+                            let channel = match iter.next().expect("Should have channel") {
+                                RespType::String(channel) => channel,
+                                _ => panic!("UNSUBSCRIBE command expects a channel")
+                            };
+                            self.subscribed_channels.remove(channel.as_str());
+                            let mut channel_to_subscribers_gaurd = self.channel_to_subscribers.lock().unwrap();
+                            match channel_to_subscribers_gaurd.get_mut(channel.as_str()) {
+                                Some(subs) => {
+                                    subs.retain(|x| x != &self.id);
+                                },
+                                _ => {}
+                            }
+                            return vec![create_array_resp(vec![create_bulk_string_resp("unsubscribe".into()), create_bulk_string_resp(channel.to_string().into()), create_int_resp(self.subscribed_channels.len())])];
+                        }
                         "subscribe" => {
                             let channel = match iter.next().expect("Should have channel") {
                                 RespType::String(channel) => channel,
