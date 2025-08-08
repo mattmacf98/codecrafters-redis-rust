@@ -1,7 +1,7 @@
 use std::slice::Iter;
 use std::sync::{Arc, Mutex};
 
-use crate::{commands::RedisCommand, redis::{create_int_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::RedisCommand, resp::{create_int_resp}, resp::types::RespType};
 
 pub struct WaitCommand {
     num_replicas: usize,

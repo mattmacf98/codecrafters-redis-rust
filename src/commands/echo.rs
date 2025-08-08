@@ -1,6 +1,6 @@
 use std::slice::Iter;
 
-use crate::{commands::RedisCommand, redis::create_simple_string_resp, resp::types::RespType};
+use crate::{commands::RedisCommand, resp::{create_simple_string_resp, types::RespType}};
 
 pub struct EchoCommand {
     message: String

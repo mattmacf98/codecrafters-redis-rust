@@ -1,7 +1,7 @@
 use std::result::Result::Ok;
 use bytes::BytesMut;
 
-use crate::{redis::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp}, resp::RespError};
+use crate::{resp::{create_array_resp, create_basic_err_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, RespError}};
 
 #[derive(Debug, Clone)]
 pub enum RespType {

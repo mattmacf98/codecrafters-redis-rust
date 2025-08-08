@@ -1,6 +1,6 @@
 use std::{collections::HashMap, slice::Iter, sync::{Arc, Mutex}};
 
-use crate::{commands::RedisCommand, redis::{client::CacheVal, create_array_resp, create_bulk_string_resp, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::RedisCommand, redis::{client::CacheVal}, resp::{create_array_resp, create_bulk_string_resp, create_null_bulk_string_resp}, resp::types::RespType};
 
 pub struct LpopCommand {
     list_key: String,

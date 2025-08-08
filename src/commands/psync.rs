@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fmt::format, slice::Iter, sync::{Arc, Mutex}};
+use std::{fmt::format, slice::Iter};
 
-use crate::{commands::RedisCommand, redis::{client::CacheVal, create_bulk_string_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::RedisCommand, resp::{create_bulk_string_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
 
 pub struct PsyncCommand {
     master_repl_id: String,

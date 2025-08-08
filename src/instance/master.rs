@@ -3,7 +3,7 @@ use std::net::TcpStream;
 
 use bytes::BytesMut;
 
-use crate::{instance::Instance, redis::client::{CacheVal, Client}, resp::rdb::Rdb};
+use crate::{instance::Instance, redis::client::{CacheVal, Client}, rdb::rdb::Rdb};
 
 pub struct MasterInstance {
     port: String,

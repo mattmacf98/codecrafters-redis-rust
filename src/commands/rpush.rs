@@ -1,6 +1,6 @@
 use std::{collections::HashMap, slice::Iter, sync::{Arc, Mutex}};
 
-use crate::{commands::RedisCommand, redis::{client::{CacheVal, ListCacheVal, StringCacheVal}, create_int_resp, create_null_bulk_string_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::RedisCommand, redis::{client::{CacheVal, ListCacheVal}}, resp::{create_int_resp, types::RespType}};
 
 pub struct RpushCommand {
     list_key: String,

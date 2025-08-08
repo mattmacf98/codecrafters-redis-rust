@@ -1,5 +1,5 @@
 use std::slice::Iter;
-use crate::{redis::create_simple_string_resp, resp::types::RespType};
+use crate::{resp::types::RespType};
 
 pub mod ping;
 pub mod echo;

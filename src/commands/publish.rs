@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io::Write, net::TcpStream, slice::Iter, sync::{Arc, Mutex}};
 
-use crate::{commands::RedisCommand, redis::{create_array_resp, create_bulk_string_resp, create_int_resp, create_simple_string_resp}, resp::types::RespType};
+use crate::{commands::RedisCommand, resp::{create_array_resp, create_bulk_string_resp, create_int_resp}, resp::types::RespType};
 
 pub struct PublishCommand {
     channel: String,
