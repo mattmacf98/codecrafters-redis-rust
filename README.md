@@ -8,5 +8,3 @@ Current Status: Completed all live modules as of 8/10/2025
 #TODO
 1. A way to do some of the network test locally for multi client interactions / replica interactions.
 2. there are lots of parameters going into instacne and client (can I encapsulate some of these into sub structs?)
-3. more logical directory structure (i.e. creating resp responses should be in resp module)
-4. rdb logic for parsing is very procedural, think about better structure functionally
